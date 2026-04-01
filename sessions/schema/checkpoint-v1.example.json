@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "checkpoint_id": "chk-0001",
+  "session_id": "session-2026-04-01-001",
+  "incident_id": "incident-7421",
+  "current_phase": "triage",
+  "current_step": 3,
+  "selected_skills": [
+    "incident-triage"
+  ],
+  "pending_tool_call": {
+    "name": "read_logs",
+    "arguments": {
+      "service": "payments-api",
+      "lookback_minutes": 15
+    }
+  },
+  "pending_verifier": {
+    "verifier_name": "api-health-check",
+    "request": {
+      "name": "api-health-check",
+      "target": "payments-api",
+      "inputs": {
+        "endpoint": "/healthz"
+      }
+    }
+  },
+  "approval_state": {
+    "status": "pending",
+    "requested_action": "restart_service",
+    "reason": "Service restart is a write-capable remediation action.",
+    "updated_at": "2026-04-01T12:15:00Z"
+  },
+  "latest_checkpoint_time": "2026-04-01T12:15:00Z",
+  "summary_of_progress": "Alert acknowledged, incident scope estimated, read-only evidence collection in progress."
+}

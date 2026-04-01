@@ -1,0 +1,19 @@
+{
+  "incident_id": "incident-replay-1",
+  "title": "Elevated 5xx errors on payments-api",
+  "service": "payments-api",
+  "symptoms": [
+    "spike in 5xx",
+    "checkout requests timing out"
+  ],
+  "impact_summary": "Customer checkout requests are failing intermittently.",
+  "expected_follow_up_target": "recent_deployment",
+  "expected_evidence_snapshot": "deployment-record-2026-04-01",
+  "expected_hypothesis_type": "deployment_regression",
+  "expected_hypothesis_supported": true,
+  "expected_recommendation_type": "validate_recent_deployment",
+  "expected_recommendation_requires_approval": true,
+  "expected_action_candidate_type": "deployment_validation_candidate",
+  "expected_action_candidate_created": true,
+  "expected_action_stub_requires_approval": true
+}

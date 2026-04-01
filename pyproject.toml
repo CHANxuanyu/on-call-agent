@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "verifier-driven-incident-response-agent"
+version = "0.1.0"
+description = "Harness-first scaffold for a verifier-driven incident response agent."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27,<1.0",
+  "pydantic>=2.7,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.10,<2.0",
+  "pytest>=8.2,<9.0",
+  "pytest-asyncio>=0.23,<1.0",
+  "ruff>=0.4.0,<1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+  "src/agent",
+  "src/evals",
+  "src/llm",
+  "src/memory",
+  "src/permissions",
+  "src/skills",
+  "src/tools",
+  "src/transcripts",
+  "src/utils",
+  "src/verifiers",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/AGENTS.md",
+  "/README.md",
+  "/docs",
+  "/evals",
+  "/pyproject.toml",
+  "/scripts",
+  "/sessions",
+  "/skills",
+  "/src",
+  "/tests",
+  "/verifiers",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+asyncio_mode = "auto"
+minversion = "8.0"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "tests"]
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
+strict = true
+warn_unused_configs = true

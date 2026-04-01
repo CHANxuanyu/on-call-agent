@@ -1,0 +1,38 @@
+{
+  "recent_deployment": {
+    "snapshot_id": "deployment-record-2026-04-01",
+    "evidence_summary": "A payments-api deployment completed 12 minutes before the alert and changed request timeout handling.",
+    "observations": [
+      "payments-api deploy 2026-04-01-1 completed 12 minutes before alert fire time",
+      "Deployment diff reduced the downstream request timeout threshold"
+    ],
+    "recommended_next_read_only_action": "Review the deployment diff for payments-api."
+  },
+  "runbook": {
+    "snapshot_id": "runbook-index-2026-04-01",
+    "evidence_summary": "The runbook index links payments-api triage to dependency timeout checks and deployment review.",
+    "observations": [
+      "Runbook section 1 recommends checking recent releases first",
+      "Runbook section 2 recommends validating downstream timeout metrics"
+    ],
+    "recommended_next_read_only_action": "Review the payments-api runbook section for dependency timeout checks."
+  },
+  "ownership": {
+    "snapshot_id": "service-catalog-2026-04-01",
+    "evidence_summary": "The service catalog lists the payments-oncall team as the owner of payments-api.",
+    "observations": [
+      "payments-api primary owner is payments-oncall",
+      "Escalation alias is payments-incident-bridge"
+    ],
+    "recommended_next_read_only_action": "Review the service catalog escalation entry for payments-api."
+  },
+  "primary_service_evidence": {
+    "snapshot_id": "service-evidence-2026-04-01",
+    "evidence_summary": "Primary service evidence shows repeated timeout errors clustered around checkout requests.",
+    "observations": [
+      "checkout requests account for 82 percent of error volume",
+      "timeout errors increased sharply after the most recent deploy window"
+    ],
+    "recommended_next_read_only_action": "Inspect the latest service evidence timeline for payments-api."
+  }
+}
