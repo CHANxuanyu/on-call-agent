@@ -1,10 +1,40 @@
 # Verifier-Driven Incident Response Agent Harness
 
-Python runtime prototype for incident-response workflows built around verifier-driven state
+Python runtime prototype for a narrow incident-response workflow built around verifier-driven state
 transitions, append-only transcripts, resumable checkpoints, and approval-aware boundaries. This
 repository is not a generic agent demo, not a coding agent, and not an autonomous remediation
-system. It is a narrow harness milestone that shows how to make incident-oriented agent behavior
+system. It is a harness-first milestone that shows how to make incident-oriented agent behavior
 durable, inspectable, replayable, and safe before adding broader automation.
+
+## What This Repository Is
+
+This repository implements one explicit incident chain:
+
+`triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+
+It is intentionally narrow. The point is to show reliable runtime behavior for incident handling,
+not broad planner behavior.
+
+In this repository, "verifier-driven" means a slice is not considered complete just because a tool
+or model returned output. Each meaningful slice records transcript events, runs its verifier, and
+only then persists the next checkpointed phase. Progression is therefore anchored to verifier
+results, not just generated text.
+
+The durable-state seams are explicit:
+
+- checkpoints in `sessions/checkpoints/<session_id>.json`
+- append-only transcripts in `sessions/transcripts/<session_id>.jsonl`
+- incident working memory in `sessions/working_memory/<incident_id>.json`
+- derived handoff artifacts in `sessions/handoffs/<incident_id>.json`
+
+The main operator-facing surfaces are the CLI commands:
+
+- `inspect-session`
+- `inspect-artifacts`
+- `show-audit`
+- `export-handoff`
+- `list-evals`
+- `run-eval`
 
 ## What This Runtime Is For
 
@@ -42,6 +72,60 @@ engineering:
 - replayable fixtures and eval coverage instead of one-off screenshots
 
 The point is to prove a reliable runtime spine, not to claim product completeness.
+
+## Quickstart
+
+Install the repository in editable mode:
+
+```bash
+python -m pip install -e '.[dev]'
+```
+
+List the built-in replay scenarios:
+
+```bash
+oncall-agent list-evals
+```
+
+Run one supported replay scenario and write its artifacts under a dedicated output root:
+
+```bash
+oncall-agent run-eval incident-chain-replay-recent-deployment --output-root /tmp/oncall-agent-demo
+```
+
+Expected outcome:
+
+- `path_classification: supported`
+- `final_stage: action_stub`
+- `handoff_status: written`
+
+The replay run writes a unique subdirectory under the output root, for example:
+
+- `/tmp/oncall-agent-demo/<generated-run-id>/checkpoints/...`
+- `/tmp/oncall-agent-demo/<generated-run-id>/transcripts/...`
+- `/tmp/oncall-agent-demo/<generated-run-id>/working_memory/...`
+- `/tmp/oncall-agent-demo/<generated-run-id>/handoffs/...`
+
+Inspect the resulting session:
+
+```bash
+oncall-agent inspect-session incident-chain-replay-recent-deployment-session \
+  --checkpoint-root /tmp/oncall-agent-demo/<generated-run-id>/checkpoints \
+  --transcript-root /tmp/oncall-agent-demo/<generated-run-id>/transcripts \
+  --working-memory-root /tmp/oncall-agent-demo/<generated-run-id>/working_memory
+```
+
+Expected outcome:
+
+- `current_phase: action_stub_pending_approval`
+- `approval_status: pending`
+- transcript and checkpoint paths for the replayed session
+
+For local verification without installing the console script, the same commands also work via:
+
+```bash
+.venv/bin/python -m runtime.cli <command> ...
+```
 
 ## Runtime Spine
 
@@ -130,6 +214,35 @@ Implemented branches:
 These scenarios prove that the harness can carry verified state forward, remain conservative when
 evidence is weak, and keep the approval boundary explicit.
 
+Built-in operator-facing replay commands:
+
+- `oncall-agent list-evals`
+- `oncall-agent run-eval incident-chain-replay-recent-deployment`
+- `oncall-agent run-eval incident-chain-replay-insufficient-evidence`
+
+For backward compatibility, `run-eval` also accepts the underscore-style built-in aliases
+`incident_chain_recent_deployment` and `incident_chain_insufficient_evidence`, but `list-evals`
+shows the canonical hyphenated names.
+
+## Operator CLI Surface
+
+The CLI is intentionally split into two surfaces.
+
+Inspection and export surface:
+
+- `oncall-agent inspect-session <session_id>`
+- `oncall-agent inspect-artifacts <session_id>`
+- `oncall-agent show-audit <session_id>`
+- `oncall-agent export-handoff <session_id>`
+
+Replay and demo surface:
+
+- `oncall-agent list-evals`
+- `oncall-agent run-eval <eval_name>`
+
+The CLI does not create or resume arbitrary operator sessions. It exposes inspection,
+artifact-export, and replay/demo flows on top of the current narrow runtime.
+
 ## Handoff Artifact Capability
 
 The current milestone includes an operator-facing derived artifact flow:
@@ -206,6 +319,25 @@ tests/unit/                    Contract and component tests
 tests/integration/             End-to-end slice and replay coverage
 docs/                          Architecture, demo, interview, and resume materials
 ```
+
+## Repository Map
+
+Key repository entrypoints for reviewers:
+
+- runtime core and harness boundary:
+  `src/runtime/harness.py`, `src/runtime/execution.py`
+- explicit incident chain:
+  `src/agent/incident_triage.py`, `src/agent/incident_follow_up.py`,
+  `src/agent/incident_evidence.py`, `src/agent/incident_hypothesis.py`,
+  `src/agent/incident_recommendation.py`, `src/agent/incident_action_stub.py`
+- durable artifact reconstruction:
+  `src/context/session_artifacts.py`
+- handoff assembly and regeneration:
+  `src/context/handoff.py`, `src/context/handoff_regeneration.py`
+- operator CLI surface:
+  `src/runtime/cli.py`, `src/runtime/inspect.py`, `src/runtime/eval_surface.py`
+- replay/eval entrypoint:
+  `src/evals/incident_chain_replay.py`
 
 ## Milestone Status
 

@@ -9,6 +9,56 @@ before adding real execution or broader automation.
 The design borrows mature harness ideas from systems like Claude Code, but it is not a coding
 agent clone. It is an incident-response runtime with narrow, typed, deterministic slices.
 
+## Runtime Lifecycle
+
+The implemented runtime is an explicit incident chain, not a generic workflow engine:
+
+`triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+
+Triage is intentionally bespoke. It establishes the first transcript and checkpoint records from a
+structured incident payload. The downstream slices are resumable continuations built on the shared
+harness and recovered artifact chain.
+
+```mermaid
+flowchart TD
+    incident[Incident Input] --> triage[IncidentTriageStep]
+    triage --> tv[triage verifier]
+    tv --> c1[checkpoint + transcript]
+
+    c1 --> followup[IncidentFollowUpStep]
+    followup --> fv[follow-up verifier]
+    fv --> c2[checkpoint + transcript]
+
+    c2 --> evidence[IncidentEvidenceStep]
+    evidence --> ev[evidence verifier]
+    ev --> c3[checkpoint + transcript]
+
+    c3 --> hypothesis[IncidentHypothesisStep]
+    hypothesis --> hv[hypothesis verifier]
+    hv --> c4[checkpoint + transcript + working memory]
+
+    c4 --> recommendation[IncidentRecommendationStep]
+    recommendation --> rv[recommendation verifier]
+    rv --> c5[checkpoint + transcript + working memory]
+
+    c5 --> actionstub[IncidentActionStubStep]
+    actionstub --> av[action-stub verifier]
+    av --> c6[checkpoint + transcript]
+
+    c1 --> sac[SessionArtifactContext]
+    c2 --> sac
+    c3 --> sac
+    c4 --> sac
+    c5 --> sac
+    c6 --> sac
+
+    sac --> inspect[inspect-session / inspect-artifacts / show-audit]
+    sac --> handoff[export-handoff]
+    handoff --> handoffjson[sessions/handoffs/<incident_id>.json]
+
+    replay[list-evals / run-eval] --> incident
+```
+
 ## Runtime Spine
 
 Implemented chain:
@@ -24,6 +74,20 @@ Each slice:
 
 The chain stops at an approval-gated action stub on purpose. The current milestone proves safe
 action candidacy, not real execution.
+
+## Narrow Chain, Not Generic Orchestration
+
+The runtime surface is intentionally split:
+
+- execution surface:
+  the explicit incident chain in `src/agent/incident_*.py`
+- inspection and export surface:
+  `src/runtime/cli.py` plus `src/runtime/inspect.py`
+- replay and demo surface:
+  `src/runtime/eval_surface.py` plus `src/evals/incident_chain_replay.py`
+
+There is no generic operator command for arbitrary session creation or loop orchestration. That is
+intentional. The current runtime is a narrow incident-response harness with one well-defined chain.
 
 ## Four Runtime Layers
 
@@ -104,6 +168,10 @@ The core runtime relationship is:
 That removes repeated step-local reconstruction while preserving checkpoint plus transcript as the
 source of truth.
 
+This is the main durable-state seam for the current repository. The inspection CLI, handoff
+regeneration path, and replay summaries all sit on top of `SessionArtifactContext` instead of
+inventing a second artifact loader.
+
 ## Synthetic Failure Invariants
 
 This runtime distinguishes between ordinary insufficiency and structured failure.
@@ -153,6 +221,15 @@ It does not absorb domain reasoning. Steps still own:
 
 This keeps the runtime explicit while reducing duplicated wiring.
 
+The asymmetry matters:
+
+- `IncidentTriageStep` is the special-case entrypoint that establishes the first durable records
+- `IncidentFollowUpStep` through `IncidentActionStubStep` are resumable slices that reload prior
+  durable state before proceeding
+
+That shape is reflected in the current replay runner and should be read as part of the runtime’s
+intentional narrowness.
+
 ## Permission Provenance And Approval Boundaries
 
 Permission decisions are structured runtime artifacts, not just booleans.
@@ -178,6 +255,9 @@ The runtime’s safety boundary is explicit:
 - future non-read-only work remains blocked pending explicit approval design
 
 That is why the runtime ends at an approval-gated action stub instead of moving into remediation.
+
+The action stub is therefore a verified and durable boundary marker, not a hidden placeholder for
+future autonomous execution.
 
 ## Incident Working Memory
 
@@ -256,6 +336,16 @@ The repository includes replay-style coverage for two deterministic branches:
   `recent_deployment -> deployment_regression -> validate_recent_deployment -> deployment_validation_candidate`
 - conservative:
   `runbook -> insufficient_evidence -> investigate_more -> no_actionable_stub_yet`
+
+The operator-facing replay surface is:
+
+- `oncall-agent list-evals`
+- `oncall-agent run-eval <scenario>`
+
+`run-eval` executes the real chain over fixed fixtures, preserves the resulting artifact directory,
+and summarizes the replay via `SessionArtifactContext` plus the handoff regenerator. This makes the
+eval layer a demo and audit surface for the existing runtime rather than a separate benchmark
+framework.
 
 This is intentionally narrow. It proves the runtime spine, not broad benchmark coverage.
 
