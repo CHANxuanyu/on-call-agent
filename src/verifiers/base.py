@@ -7,6 +7,8 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from runtime.models import SyntheticFailure
+
 
 class VerifierStatus(StrEnum):
     """Normalized verifier statuses."""
@@ -75,6 +77,7 @@ class VerifierResult(BaseModel):
     diagnostics: list[VerifierDiagnostic] = Field(default_factory=list)
     retry_hint: VerifierRetryHint | None = None
     evidence: list[VerifierEvidence] = Field(default_factory=list)
+    synthetic_failure: SyntheticFailure | None = None
 
 
 class Verifier(Protocol):

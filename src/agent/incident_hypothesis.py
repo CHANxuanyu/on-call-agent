@@ -8,26 +8,27 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.state import AgentStatus
-from memory.checkpoints import JsonCheckpointStore, PendingVerifier, SessionCheckpoint
-from permissions.models import PermissionAction, PermissionDecision
+from context.session_artifacts import SessionArtifactContext
+from memory.checkpoints import SessionCheckpoint
+from memory.incident_working_memory import (
+    IncidentWorkingMemory,
+    JsonIncidentWorkingMemoryStore,
+    LeadingHypothesisSnapshot,
+)
+from permissions.models import PermissionDecision
 from permissions.policy import PermissionPolicy
+from runtime.harness import (
+    ResumableSliceHarness,
+    combine_artifact_failure,
+    pending_verifier_for_status,
+)
+from runtime.models import SyntheticFailure
 from tools.implementations.evidence_reading import EvidenceReadOutput
 from tools.implementations.incident_hypothesis import (
     IncidentHypothesisBuilderTool,
     IncidentHypothesisOutput,
 )
 from tools.models import ToolCall, ToolResult
-from transcripts.models import (
-    CheckpointWrittenEvent,
-    ModelStepEvent,
-    PermissionDecisionEvent,
-    ResumeStartedEvent,
-    ToolRequestEvent,
-    ToolResultEvent,
-    TranscriptEvent,
-    VerifierResultEvent,
-)
-from transcripts.writer import JsonlTranscriptStore
 from verifiers.base import VerifierRequest, VerifierResult, VerifierStatus
 from verifiers.implementations.incident_hypothesis import (
     HypothesisBranch,
@@ -77,6 +78,7 @@ class IncidentHypothesisStepResult(BaseModel):
     permission_decision: PermissionDecision | None = None
     tool_result: ToolResult | None = None
     hypothesis_output: IncidentHypothesisOutput | None = None
+    artifact_failure: SyntheticFailure | None = None
     checkpoint_path: Path
     checkpoint: SessionCheckpoint
     insufficiency_reason: str | None = None
@@ -84,12 +86,12 @@ class IncidentHypothesisStepResult(BaseModel):
 
 @dataclass(slots=True)
 class _HypothesisResumeContext:
-    checkpoint_path: Path
-    transcript_path: Path
-    checkpoint: SessionCheckpoint
-    transcript_events: tuple[TranscriptEvent, ...]
+    harness: ResumableSliceHarness
+    artifact_context: SessionArtifactContext
     evidence_output: EvidenceReadOutput | None
     evidence_verifier_passed: bool
+    evidence_failure: SyntheticFailure | None = None
+    evidence_insufficiency_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -106,28 +108,16 @@ class IncidentHypothesisStep:
 
     async def run(self, request: IncidentHypothesisStepRequest) -> IncidentHypothesisStepResult:
         context = self._load_context(request.session_id)
-        step_index = context.checkpoint.current_step + 1
-        transcript_store = JsonlTranscriptStore(context.transcript_path)
-        checkpoint_store = JsonCheckpointStore(context.checkpoint_path)
+        harness = context.harness
+        step_index = harness.step_index
 
-        transcript_store.append(
-            ResumeStartedEvent(
-                session_id=request.session_id,
-                step_index=step_index,
-                checkpoint_id=context.checkpoint.checkpoint_id,
-                reason=request.resume_reason,
-            )
-        )
+        harness.emit_resume_started(reason=request.resume_reason)
 
         branch, insufficiency_reason = self._select_branch(context)
         evidence_output = context.evidence_output
-        transcript_store.append(
-            ModelStepEvent(
-                session_id=request.session_id,
-                step_index=step_index,
-                summary=self._model_step_summary(branch, context, evidence_output),
-                planned_verifiers=[self.verifier.definition.name],
-            )
+        harness.emit_model_step(
+            summary=self._model_step_summary(branch, context, evidence_output),
+            planned_verifiers=[self.verifier.definition.name],
         )
 
         permission_decision: PermissionDecision | None = None
@@ -135,18 +125,6 @@ class IncidentHypothesisStep:
         hypothesis_output: IncidentHypothesisOutput | None = None
 
         if branch is HypothesisBranch.BUILD_HYPOTHESIS:
-            permission_decision = self.permission_policy.decide(self.tool.definition)
-            transcript_store.append(
-                PermissionDecisionEvent(
-                    session_id=request.session_id,
-                    step_index=step_index,
-                    decision=permission_decision,
-                )
-            )
-            if permission_decision.action is not PermissionAction.ALLOW:
-                msg = "incident hypothesis tool must remain read-only and allowed by default"
-                raise RuntimeError(msg)
-
             if evidence_output is None:
                 msg = "hypothesis branch requires a durable evidence record"
                 raise RuntimeError(msg)
@@ -155,35 +133,33 @@ class IncidentHypothesisStep:
                 name=self.tool.definition.name,
                 arguments={"evidence_output": evidence_output.model_dump(mode="json")},
             )
-            call_id = f"{request.session_id}-incident-hypothesis-tool"
-            transcript_store.append(
-                ToolRequestEvent(
-                    session_id=request.session_id,
-                    step_index=step_index,
-                    call_id=call_id,
-                    tool_call=tool_call,
-                )
+            tool_outcome = await harness.execute_read_only_tool(
+                tool=self.tool,
+                permission_policy=self.permission_policy,
+                tool_call=tool_call,
+                call_id=f"{request.session_id}-incident-hypothesis-tool",
+                output_model=IncidentHypothesisOutput,
+                permission_denied_message=(
+                    "incident hypothesis tool must remain read-only and allowed by default"
+                ),
             )
-            tool_result = await self.tool.execute(tool_call)
-            transcript_store.append(
-                ToolResultEvent(
-                    session_id=request.session_id,
-                    step_index=step_index,
-                    call_id=call_id,
-                    tool_name=self.tool.definition.name,
-                    result=tool_result,
-                )
-            )
-            hypothesis_output = self._parse_hypothesis_output(tool_result)
+            permission_decision = tool_outcome.permission_decision
+            tool_result = tool_outcome.tool_result
+            hypothesis_output = tool_outcome.output
 
         verifier_request = VerifierRequest(
             name=self.verifier.definition.name,
-            target=context.checkpoint.incident_id,
+            target=context.artifact_context.checkpoint.incident_id,
             inputs={
                 "branch": branch,
-                "evidence_phase": context.checkpoint.current_phase,
+                "evidence_phase": context.artifact_context.checkpoint.current_phase,
                 "evidence_verifier_passed": context.evidence_verifier_passed,
                 "insufficiency_reason": insufficiency_reason,
+                "prior_artifact_failure": (
+                    context.evidence_failure.model_dump(mode="json")
+                    if context.evidence_failure is not None
+                    else None
+                ),
                 "evidence_output": (
                     evidence_output.model_dump(mode="json")
                     if evidence_output is not None
@@ -196,59 +172,61 @@ class IncidentHypothesisStep:
                 ),
             },
         )
-        verifier_result = await self.verifier.verify(verifier_request)
-        transcript_store.append(
-            VerifierResultEvent(
-                session_id=request.session_id,
-                step_index=step_index,
-                verifier_name=self.verifier.definition.name,
-                request=verifier_request,
-                result=verifier_result,
-            )
+        verifier_result = await harness.execute_verifier(
+            verifier=self.verifier,
+            request=verifier_request,
+        )
+        artifact_failure = combine_artifact_failure(
+            prior_failure=context.evidence_failure,
+            tool_result=tool_result,
+            verifier_result=verifier_result,
         )
 
         checkpoint = SessionCheckpoint(
             checkpoint_id=f"{request.session_id}-incident-hypothesis",
             session_id=request.session_id,
-            incident_id=context.checkpoint.incident_id,
+            incident_id=context.artifact_context.checkpoint.incident_id,
             current_phase=self._current_phase(
                 branch=branch,
                 verifier_status=verifier_result.status,
                 hypothesis_output=hypothesis_output,
+                artifact_failure=artifact_failure,
             ),
             current_step=step_index,
-            selected_skills=context.checkpoint.selected_skills,
-            pending_verifier=self._pending_verifier(verifier_request, verifier_result.status),
+            selected_skills=context.artifact_context.checkpoint.selected_skills,
+            pending_verifier=pending_verifier_for_status(
+                verifier_name=self.verifier.definition.name,
+                verifier_request=verifier_request,
+                verifier_status=verifier_result.status,
+            ),
             summary_of_progress=self._progress_summary(
                 branch=branch,
                 evidence_output=evidence_output,
                 hypothesis_output=hypothesis_output,
                 verifier_result=verifier_result,
                 insufficiency_reason=insufficiency_reason,
+                artifact_failure=artifact_failure,
             ),
         )
-        checkpoint_store.write(checkpoint)
-        transcript_store.append(
-            CheckpointWrittenEvent(
-                session_id=request.session_id,
-                step_index=step_index,
-                checkpoint_id=checkpoint.checkpoint_id,
-                checkpoint_path=context.checkpoint_path,
-                summary_of_progress=checkpoint.summary_of_progress,
-            )
+        harness.write_checkpoint(checkpoint)
+        self._write_incident_working_memory(
+            session_id=request.session_id,
+            checkpoint=checkpoint,
+            verifier_result=verifier_result,
+            hypothesis_output=hypothesis_output,
         )
 
         return IncidentHypothesisStepResult(
             session_id=request.session_id,
-            incident_id=context.checkpoint.incident_id,
+            incident_id=context.artifact_context.checkpoint.incident_id,
             resumed_successfully=branch is HypothesisBranch.BUILD_HYPOTHESIS,
             branch=branch,
             consulted_artifacts=HypothesisResumeArtifacts(
-                checkpoint_path=context.checkpoint_path,
-                transcript_path=context.transcript_path,
-                previous_checkpoint_id=context.checkpoint.checkpoint_id,
-                previous_phase=context.checkpoint.current_phase,
-                prior_transcript_event_count=len(context.transcript_events),
+                checkpoint_path=context.artifact_context.checkpoint_path,
+                transcript_path=context.artifact_context.transcript_path,
+                previous_checkpoint_id=context.artifact_context.checkpoint.checkpoint_id,
+                previous_phase=context.artifact_context.checkpoint.current_phase,
+                prior_transcript_event_count=len(context.artifact_context.transcript_events),
                 evidence_verifier_passed=context.evidence_verifier_passed,
             ),
             consumed_evidence_output=evidence_output,
@@ -256,7 +234,11 @@ class IncidentHypothesisStep:
                 self.tool.definition.name if branch is HypothesisBranch.BUILD_HYPOTHESIS else None
             ),
             verifier_name=self.verifier.definition.name,
-            runner_status=self._runner_status(branch, verifier_result.status),
+            runner_status=self._runner_status(
+                branch,
+                verifier_result.status,
+                artifact_failure,
+            ),
             evidence_supported=(
                 hypothesis_output.evidence_supported if hypothesis_output is not None else None
             ),
@@ -265,76 +247,42 @@ class IncidentHypothesisStep:
             permission_decision=permission_decision,
             tool_result=tool_result,
             hypothesis_output=hypothesis_output,
-            checkpoint_path=context.checkpoint_path,
+            artifact_failure=artifact_failure,
+            checkpoint_path=context.artifact_context.checkpoint_path,
             checkpoint=checkpoint,
             insufficiency_reason=insufficiency_reason,
         )
 
     def _load_context(self, session_id: str) -> _HypothesisResumeContext:
-        checkpoint_path = self.checkpoint_root / f"{session_id}.json"
-        transcript_path = self.transcript_root / f"{session_id}.jsonl"
-        checkpoint = JsonCheckpointStore(checkpoint_path).load()
-        transcript_events = JsonlTranscriptStore(transcript_path).read_all()
-
-        return _HypothesisResumeContext(
-            checkpoint_path=checkpoint_path,
-            transcript_path=transcript_path,
-            checkpoint=checkpoint,
-            transcript_events=transcript_events,
-            evidence_output=self._latest_evidence_output(transcript_events),
-            evidence_verifier_passed=self._latest_evidence_verifier_status(transcript_events)
-            is VerifierStatus.PASS,
+        harness = ResumableSliceHarness.load(
+            session_id=session_id,
+            step_name="incident_hypothesis",
+            checkpoint_root=self.checkpoint_root,
+            transcript_root=self.transcript_root,
+            working_memory_root=self._working_memory_root(),
         )
-
-    def _latest_evidence_output(
-        self,
-        transcript_events: tuple[TranscriptEvent, ...],
-    ) -> EvidenceReadOutput | None:
-        for event in reversed(transcript_events):
-            if (
-                isinstance(event, ToolResultEvent)
-                and event.tool_name == "evidence_bundle_reader"
-                and event.result.output
-            ):
-                return EvidenceReadOutput.model_validate(event.result.output)
-        return None
-
-    def _latest_evidence_verifier_status(
-        self,
-        transcript_events: tuple[TranscriptEvent, ...],
-    ) -> VerifierStatus | None:
-        for event in reversed(transcript_events):
-            if (
-                isinstance(event, VerifierResultEvent)
-                and event.verifier_name == "incident_evidence_read_outcome"
-            ):
-                return event.result.status
-        return None
+        artifact_context = harness.artifact_context
+        evidence_resolution = artifact_context.evidence_output_for_hypothesis_step()
+        evidence_record = artifact_context.latest_evidence_output()
+        return _HypothesisResumeContext(
+            harness=harness,
+            artifact_context=artifact_context,
+            evidence_output=evidence_resolution.artifact,
+            evidence_verifier_passed=evidence_record.verifier_status is VerifierStatus.PASS,
+            evidence_failure=evidence_resolution.failure,
+            evidence_insufficiency_reason=evidence_resolution.reason,
+        )
 
     def _select_branch(
         self,
         context: _HypothesisResumeContext,
     ) -> tuple[HypothesisBranch, str | None]:
-        if (
-            context.checkpoint.current_phase == "evidence_reading_completed"
-            and context.evidence_verifier_passed
-            and context.evidence_output is not None
-        ):
+        if context.evidence_output is not None:
             return HypothesisBranch.BUILD_HYPOTHESIS, None
-        if (
-            context.checkpoint.current_phase == "evidence_reading_completed"
-            and context.evidence_verifier_passed
-            and context.evidence_output is None
-        ):
-            return (
-                HypothesisBranch.INSUFFICIENT_STATE,
-                "Evidence artifacts indicate a verified evidence record should exist, "
-                "but the transcript is missing it.",
-            )
         return (
             HypothesisBranch.INSUFFICIENT_STATE,
-            "Prior artifacts do not yet contain a verified evidence record for "
-            "hypothesis building.",
+            context.evidence_insufficiency_reason
+            or "Prior artifacts do not yet contain a verified evidence record.",
         )
 
     def _model_step_summary(
@@ -348,26 +296,28 @@ class IncidentHypothesisStep:
                 f"Resume recovered evidence snapshot {evidence_output.snapshot_id} from "
                 "durable artifacts and will build one deterministic incident hypothesis."
             )
+        if context.evidence_failure is not None:
+            return (
+                "Resume found a structured evidence artifact failure in phase "
+                f"{context.artifact_context.checkpoint.current_phase}, so the "
+                "incident-hypothesis step will record a failure-aware insufficient-state branch."
+            )
         return (
-            f"Resume did not find a usable verified evidence record in phase "
-            f"{context.checkpoint.current_phase}, so the incident-hypothesis step will record "
+            "Resume did not find a usable verified evidence record in phase "
+            f"{context.artifact_context.checkpoint.current_phase}, so the "
+            "incident-hypothesis step will record "
             "an insufficient-state branch."
         )
-
-    def _parse_hypothesis_output(
-        self,
-        tool_result: ToolResult,
-    ) -> IncidentHypothesisOutput | None:
-        if not tool_result.output:
-            return None
-        return IncidentHypothesisOutput.model_validate(tool_result.output)
 
     def _current_phase(
         self,
         branch: HypothesisBranch,
         verifier_status: VerifierStatus,
         hypothesis_output: IncidentHypothesisOutput | None,
+        artifact_failure: SyntheticFailure | None,
     ) -> str:
+        if artifact_failure is not None:
+            return "hypothesis_failed_artifacts"
         if verifier_status is VerifierStatus.UNVERIFIED:
             return "hypothesis_unverified"
         if verifier_status is VerifierStatus.FAIL:
@@ -380,18 +330,6 @@ class IncidentHypothesisStep:
             return "hypothesis_supported"
         return "hypothesis_insufficient_evidence"
 
-    def _pending_verifier(
-        self,
-        verifier_request: VerifierRequest,
-        verifier_status: VerifierStatus,
-    ) -> PendingVerifier | None:
-        if verifier_status is VerifierStatus.PASS:
-            return None
-        return PendingVerifier(
-            verifier_name=self.verifier.definition.name,
-            request=verifier_request,
-        )
-
     def _progress_summary(
         self,
         branch: HypothesisBranch,
@@ -399,7 +337,13 @@ class IncidentHypothesisStep:
         hypothesis_output: IncidentHypothesisOutput | None,
         verifier_result: VerifierResult,
         insufficiency_reason: str | None,
+        artifact_failure: SyntheticFailure | None,
     ) -> str:
+        if artifact_failure is not None:
+            return (
+                "Incident hypothesis step encountered a structured artifact failure: "
+                f"{artifact_failure.reason} Verifier status: {verifier_result.status}."
+            )
         if branch is HypothesisBranch.INSUFFICIENT_STATE:
             return (
                 f"Incident hypothesis step deferred. Reason: {insufficiency_reason} "
@@ -419,7 +363,10 @@ class IncidentHypothesisStep:
         self,
         branch: HypothesisBranch,
         verifier_status: VerifierStatus,
+        artifact_failure: SyntheticFailure | None,
     ) -> AgentStatus:
+        if artifact_failure is not None:
+            return AgentStatus.FAILED
         if verifier_status is VerifierStatus.UNVERIFIED:
             return AgentStatus.VERIFYING
         if verifier_status is VerifierStatus.FAIL:
@@ -430,3 +377,69 @@ class IncidentHypothesisStep:
 
     def _more_follow_up_required(self, verifier_status: VerifierStatus) -> bool:
         return True
+
+    def _working_memory_root(self) -> Path:
+        return self.checkpoint_root.parent / "working_memory"
+
+    def _write_incident_working_memory(
+        self,
+        *,
+        session_id: str,
+        checkpoint: SessionCheckpoint,
+        verifier_result: VerifierResult,
+        hypothesis_output: IncidentHypothesisOutput | None,
+    ) -> None:
+        if verifier_result.status is not VerifierStatus.PASS or hypothesis_output is None:
+            return
+
+        JsonIncidentWorkingMemoryStore.for_incident(
+            checkpoint.incident_id,
+            root=self._working_memory_root(),
+        ).write(
+            IncidentWorkingMemory(
+                incident_id=checkpoint.incident_id,
+                service=hypothesis_output.service,
+                source_session_id=session_id,
+                source_checkpoint_id=checkpoint.checkpoint_id,
+                source_phase=checkpoint.current_phase,
+                last_updated_by_step="incident_hypothesis",
+                leading_hypothesis=LeadingHypothesisSnapshot(
+                    hypothesis_type=hypothesis_output.hypothesis_type,
+                    summary=hypothesis_output.rationale_summary,
+                    evidence_supported=hypothesis_output.evidence_supported,
+                ),
+                unresolved_gaps=hypothesis_output.unresolved_gaps,
+                important_evidence_references=self._important_evidence_references(
+                    hypothesis_output
+                ),
+                compact_handoff_note=self._compact_handoff_note(hypothesis_output),
+            )
+        )
+
+    def _important_evidence_references(
+        self,
+        hypothesis_output: IncidentHypothesisOutput,
+    ) -> list[str]:
+        return list(
+            dict.fromkeys(
+                [
+                    f"evidence:{hypothesis_output.evidence_snapshot_id}",
+                    f"investigation_target:{hypothesis_output.evidence_investigation_target}",
+                    *[
+                        f"field:{field_name}"
+                        for field_name in hypothesis_output.supporting_evidence_fields
+                    ],
+                ]
+            )
+        )
+
+    def _compact_handoff_note(
+        self,
+        hypothesis_output: IncidentHypothesisOutput,
+    ) -> str:
+        return (
+            f"Current verified hypothesis for {hypothesis_output.service} is "
+            f"{hypothesis_output.hypothesis_type}. "
+            f"Rationale: {hypothesis_output.rationale_summary} "
+            "No verified recommendation has been recorded yet."
+        )

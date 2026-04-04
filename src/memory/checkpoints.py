@@ -30,6 +30,7 @@ class ApprovalState(BaseModel):
     status: ApprovalStatus = ApprovalStatus.NONE
     requested_action: str | None = None
     reason: str | None = None
+    future_preconditions: list[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

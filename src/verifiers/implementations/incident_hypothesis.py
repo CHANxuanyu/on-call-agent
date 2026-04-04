@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from runtime.models import SyntheticFailure
 from tools.implementations.evidence_reading import EvidenceReadOutput
 from tools.implementations.incident_hypothesis import (
     HypothesisConfidence,
@@ -40,6 +41,7 @@ class IncidentHypothesisVerificationInput(BaseModel):
     evidence_phase: str
     evidence_verifier_passed: bool
     insufficiency_reason: str | None = None
+    prior_artifact_failure: SyntheticFailure | None = None
     evidence_output: EvidenceReadOutput | None = None
     hypothesis_output: IncidentHypothesisOutput | None = None
 
@@ -125,6 +127,7 @@ class IncidentHypothesisOutcomeVerifier:
         if (
             payload.evidence_phase == "evidence_reading_completed"
             and payload.evidence_verifier_passed
+            and payload.prior_artifact_failure is None
         ):
             diagnostics.append(
                 VerifierDiagnostic(
@@ -171,6 +174,16 @@ class IncidentHypothesisOutcomeVerifier:
                     description=payload.insufficiency_reason,
                 ),
             ],
+            diagnostics=(
+                [
+                    VerifierDiagnostic(
+                        code=payload.prior_artifact_failure.code.value,
+                        message=payload.prior_artifact_failure.reason,
+                    )
+                ]
+                if payload.prior_artifact_failure is not None
+                else []
+            ),
         )
 
     def _verify_hypothesis(

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -11,7 +12,11 @@ from agent.incident_recommendation import (
 )
 from agent.incident_triage import IncidentTriageStep, IncidentTriageStepRequest
 from agent.state import AgentStatus
+from context.session_artifacts import SessionArtifactContext
 from memory.checkpoints import JsonCheckpointStore
+from runtime.models import SyntheticFailureCode
+from tools.implementations.incident_recommendation import IncidentRecommendationBuilderTool
+from tools.models import ToolCall, ToolResult
 from transcripts.models import (
     CheckpointWrittenEvent,
     ModelStepEvent,
@@ -223,3 +228,64 @@ async def test_incident_recommendation_step_records_insufficient_state_without_h
 
     assert checkpoint.current_phase == "recommendation_deferred"
     assert checkpoint.pending_verifier is None
+
+
+class _MalformedRecommendationTool(IncidentRecommendationBuilderTool):
+    async def execute(self, call: ToolCall) -> ToolResult:
+        del call
+        return cast(
+            ToolResult,
+            {
+                "status": "succeeded",
+                "output": {"unexpected": "shape"},
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_incident_recommendation_step_normalizes_malformed_tool_output(
+    tmp_path: Path,
+) -> None:
+    await _run_chain_to_hypothesis(
+        tmp_path,
+        session_id="session-malformed-recommendation",
+        incident_id="incident-malformed-recommendation",
+    )
+
+    recommendation_step = IncidentRecommendationStep(
+        transcript_root=tmp_path / "transcripts",
+        checkpoint_root=tmp_path / "checkpoints",
+        tool=_MalformedRecommendationTool(),
+    )
+    result = await recommendation_step.run(
+        IncidentRecommendationStepRequest(session_id="session-malformed-recommendation")
+    )
+
+    events = JsonlTranscriptStore(result.consulted_artifacts.transcript_path).read_all()
+    checkpoint = JsonCheckpointStore(result.checkpoint_path).load()
+    context = SessionArtifactContext.load(
+        "session-malformed-recommendation",
+        checkpoint_root=tmp_path / "checkpoints",
+        transcript_root=tmp_path / "transcripts",
+    )
+
+    tool_event = events[31]
+    assert isinstance(tool_event, ToolResultEvent)
+    assert result.recommendation_output is None
+    assert result.artifact_failure is not None
+    assert result.artifact_failure.code is SyntheticFailureCode.TOOL_OUTPUT_VALIDATION_FAILED
+    assert result.runner_status is AgentStatus.FAILED
+    assert result.verifier_result.status is VerifierStatus.UNVERIFIED
+    assert tool_event.result.failure is not None
+    assert tool_event.result.failure.synthetic_failure is not None
+    assert (
+        tool_event.result.failure.synthetic_failure.code
+        is SyntheticFailureCode.TOOL_OUTPUT_VALIDATION_FAILED
+    )
+    assert checkpoint.current_phase == "recommendation_failed_artifacts"
+    assert checkpoint.pending_verifier is not None
+
+    resolution = context.latest_verified_recommendation_output()
+    assert resolution.artifact is None
+    assert resolution.failure is not None
+    assert resolution.failure.code is SyntheticFailureCode.TOOL_OUTPUT_VALIDATION_FAILED

@@ -1,6 +1,14 @@
 from pathlib import Path
 
-from permissions.models import PermissionAction, PermissionDecision
+from permissions.models import (
+    EvaluatedActionType,
+    PermissionAction,
+    PermissionActionCategory,
+    PermissionDecision,
+    PermissionDecisionProvenance,
+    PermissionPolicySource,
+    PermissionSafetyBoundary,
+)
 from tools.models import ToolCall, ToolFailure, ToolResult, ToolResultStatus, ToolRiskLevel
 from transcripts.models import (
     ModelStepEvent,
@@ -86,6 +94,19 @@ def test_permission_decision_event_round_trips_through_json() -> None:
             risk_level=ToolRiskLevel.READ_ONLY,
             action=PermissionAction.ALLOW,
             reason="read-only tools are allowed by default",
+            provenance=PermissionDecisionProvenance(
+                policy_source=PermissionPolicySource.DEFAULT_SAFE_TOOL_RISK,
+                action_category=PermissionActionCategory.TOOL_EXECUTION,
+                evaluated_action_type=EvaluatedActionType.READ_ONLY_TOOL,
+                approval_required=False,
+                conservative_reason="The runtime only executes read-only tools by default.",
+                safety_boundary=PermissionSafetyBoundary.READ_ONLY_ONLY,
+                future_preconditions=[
+                    "The tool must remain read-only.",
+                    "Any future write action requires explicit approval.",
+                ],
+                notes=["Transcript round-trip test."],
+            ),
         ),
     )
 
@@ -93,3 +114,5 @@ def test_permission_decision_event_round_trips_through_json() -> None:
 
     assert isinstance(parsed, PermissionDecisionEvent)
     assert parsed.decision.action is PermissionAction.ALLOW
+    assert parsed.decision.provenance.action_category is PermissionActionCategory.TOOL_EXECUTION
+    assert parsed.decision.provenance.notes == ["Transcript round-trip test."]

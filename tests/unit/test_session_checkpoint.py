@@ -34,6 +34,9 @@ def test_session_checkpoint_models_resumable_state() -> None:
             status=ApprovalStatus.PENDING,
             requested_action="restart_service",
             reason="Pending human approval",
+            future_preconditions=[
+                "Record explicit approval before any non-read-only action."
+            ],
             updated_at=datetime(2026, 4, 1, tzinfo=UTC),
         ),
         summary_of_progress="Read-only evidence collected and verification queued.",
@@ -42,6 +45,9 @@ def test_session_checkpoint_models_resumable_state() -> None:
     assert checkpoint.pending_tool_call is not None
     assert checkpoint.pending_verifier is not None
     assert checkpoint.approval_state.status is ApprovalStatus.PENDING
+    assert checkpoint.approval_state.future_preconditions == [
+        "Record explicit approval before any non-read-only action."
+    ]
 
 
 def test_session_checkpoint_rejects_unknown_fields() -> None:

@@ -16,6 +16,12 @@ from agent.incident_recommendation import (
 from agent.incident_triage import IncidentTriageStep, IncidentTriageStepRequest
 from agent.state import AgentStatus
 from memory.checkpoints import ApprovalStatus, JsonCheckpointStore
+from permissions.models import (
+    EvaluatedActionType,
+    PermissionActionCategory,
+    PermissionPolicySource,
+    PermissionSafetyBoundary,
+)
 from tools.implementations.incident_action_stub import ActionCandidateType
 from transcripts.models import (
     CheckpointWrittenEvent,
@@ -119,9 +125,27 @@ async def test_incident_action_stub_step_builds_approval_gated_candidate(
     assert result.future_non_read_only_action_blocked_pending_approval is True
     assert result.verifier_result.status is VerifierStatus.PASS
     assert result.action_stub_output is not None
+    assert result.permission_decision is not None
     assert (
         result.action_stub_output.action_candidate_type
         is ActionCandidateType.DEPLOYMENT_VALIDATION_CANDIDATE
+    )
+    assert (
+        result.permission_decision.provenance.policy_source
+        is PermissionPolicySource.DEFAULT_SAFE_TOOL_RISK
+    )
+    assert (
+        result.permission_decision.provenance.action_category
+        is PermissionActionCategory.TOOL_EXECUTION
+    )
+    assert (
+        result.permission_decision.provenance.evaluated_action_type
+        is EvaluatedActionType.READ_ONLY_TOOL
+    )
+    assert result.permission_decision.provenance.approval_required is False
+    assert (
+        result.permission_decision.provenance.safety_boundary
+        is PermissionSafetyBoundary.READ_ONLY_ONLY
     )
     assert result.consulted_artifacts.previous_phase == "recommendation_supported"
     assert result.consulted_artifacts.prior_transcript_event_count == 34
@@ -136,6 +160,21 @@ async def test_incident_action_stub_step_builds_approval_gated_candidate(
 
     assert checkpoint.current_phase == "action_stub_pending_approval"
     assert checkpoint.approval_state.status is ApprovalStatus.PENDING
+    permission_event = events[36]
+    assert isinstance(permission_event, PermissionDecisionEvent)
+    assert (
+        permission_event.decision.provenance.policy_source
+        is PermissionPolicySource.DEFAULT_SAFE_TOOL_RISK
+    )
+    assert (
+        permission_event.decision.provenance.evaluated_action_type
+        is EvaluatedActionType.READ_ONLY_TOOL
+    )
+    assert checkpoint.approval_state.future_preconditions == [
+        "Confirm the deployment diff matches the affected request path.",
+        "Keep all next actions advisory until on-call lead approval is recorded.",
+        "Human approval must be recorded before any non-read-only action.",
+    ]
     assert checkpoint.pending_verifier is None
 
 
@@ -169,6 +208,7 @@ async def test_incident_action_stub_step_builds_no_actionable_outcome(
     assert result.conservative_due_to_insufficient_evidence is True
     assert result.future_non_read_only_action_blocked_pending_approval is False
     assert result.action_stub_output is not None
+    assert result.permission_decision is not None
     assert (
         result.action_stub_output.action_candidate_type
         is ActionCandidateType.NO_ACTIONABLE_STUB_YET
@@ -176,6 +216,10 @@ async def test_incident_action_stub_step_builds_no_actionable_outcome(
     assert result.verifier_result.status is VerifierStatus.PASS
     assert checkpoint.current_phase == "action_stub_not_actionable"
     assert checkpoint.approval_state.status is ApprovalStatus.NONE
+    assert checkpoint.approval_state.future_preconditions == [
+        "Keep next actions read-only until deployment-specific causal evidence exists.",
+        "Stronger causal evidence is required before proposing a non-read-only candidate.",
+    ]
     assert checkpoint.pending_verifier is None
 
 

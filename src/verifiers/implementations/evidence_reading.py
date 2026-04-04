@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from runtime.models import SyntheticFailure
 from tools.implementations.evidence_reading import EvidenceReadOutput
 from tools.implementations.follow_up_investigation import InvestigationTarget
 from verifiers.base import (
@@ -36,6 +37,7 @@ class EvidenceReadVerificationInput(BaseModel):
     follow_up_verifier_passed: bool
     selected_target: InvestigationTarget | None = None
     insufficiency_reason: str | None = None
+    prior_artifact_failure: SyntheticFailure | None = None
     evidence_output: EvidenceReadOutput | None = None
 
 
@@ -113,6 +115,7 @@ class EvidenceReadOutcomeVerifier:
         if (
             payload.follow_up_phase == "follow_up_investigation_selected"
             and payload.follow_up_verifier_passed
+            and payload.prior_artifact_failure is None
         ):
             diagnostics.append(
                 VerifierDiagnostic(
@@ -158,6 +161,16 @@ class EvidenceReadOutcomeVerifier:
                     description=payload.insufficiency_reason,
                 ),
             ],
+            diagnostics=(
+                [
+                    VerifierDiagnostic(
+                        code=payload.prior_artifact_failure.code.value,
+                        message=payload.prior_artifact_failure.reason,
+                    )
+                ]
+                if payload.prior_artifact_failure is not None
+                else []
+            ),
         )
 
     def _verify_evidence_output(

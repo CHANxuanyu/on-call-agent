@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.state import AgentStatus
+from context.session_artifacts import SessionArtifactContext
 from memory.checkpoints import JsonCheckpointStore, PendingVerifier, SessionCheckpoint
 from permissions.models import PermissionAction, PermissionDecision
 from permissions.policy import PermissionPolicy
@@ -24,7 +25,6 @@ from transcripts.models import (
     ResumeStartedEvent,
     ToolRequestEvent,
     ToolResultEvent,
-    TranscriptEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -81,12 +81,10 @@ class IncidentFollowUpStepResult(BaseModel):
 
 @dataclass(slots=True)
 class _ResumeContext:
-    checkpoint_path: Path
-    transcript_path: Path
-    checkpoint: SessionCheckpoint
-    transcript_events: tuple[TranscriptEvent, ...]
+    artifact_context: SessionArtifactContext
     triage_output: IncidentTriageOutput | None
     triage_was_verified_complete: bool
+    triage_insufficiency_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -101,22 +99,25 @@ class IncidentFollowUpStep:
 
     async def run(self, request: IncidentFollowUpStepRequest) -> IncidentFollowUpStepResult:
         context = self._load_context(request.session_id)
-        step_index = context.checkpoint.current_step + 1
-        transcript_store = JsonlTranscriptStore(context.transcript_path)
-        checkpoint_store = JsonCheckpointStore(context.checkpoint_path)
+        step_index = context.artifact_context.checkpoint.current_step + 1
+        transcript_store = JsonlTranscriptStore(context.artifact_context.transcript_path)
+        checkpoint_store = JsonCheckpointStore(context.artifact_context.checkpoint_path)
 
         transcript_store.append(
             ResumeStartedEvent(
                 session_id=request.session_id,
                 step_index=step_index,
-                checkpoint_id=context.checkpoint.checkpoint_id,
+                checkpoint_id=context.artifact_context.checkpoint.checkpoint_id,
                 reason=request.resume_reason,
             )
         )
 
         triage_output = context.triage_output
         if triage_output is None:
-            msg = "resume requires prior structured triage output in the transcript"
+            msg = (
+                context.triage_insufficiency_reason
+                or "resume requires prior structured triage output in the transcript"
+            )
             raise RuntimeError(msg)
 
         branch = self._select_branch(
@@ -137,7 +138,13 @@ class IncidentFollowUpStep:
         investigation_output: FollowUpInvestigationOutput | None = None
 
         if branch is FollowUpBranch.INVESTIGATE:
-            permission_decision = self.permission_policy.decide(self.tool.definition)
+            permission_decision = self.permission_policy.decide(
+                self.tool.definition,
+                notes=[
+                    "Step 'incident_follow_up' evaluated this tool directly in the "
+                    "follow-up slice."
+                ],
+            )
             transcript_store.append(
                 PermissionDecisionEvent(
                     session_id=request.session_id,
@@ -176,7 +183,7 @@ class IncidentFollowUpStep:
 
         verifier_request = VerifierRequest(
             name=self.verifier.definition.name,
-            target=context.checkpoint.incident_id,
+            target=context.artifact_context.checkpoint.incident_id,
             inputs={
                 "branch": branch,
                 "triage_verifier_passed": context.triage_was_verified_complete,
@@ -202,10 +209,10 @@ class IncidentFollowUpStep:
         checkpoint = SessionCheckpoint(
             checkpoint_id=f"{request.session_id}-follow-up",
             session_id=request.session_id,
-            incident_id=context.checkpoint.incident_id,
+            incident_id=context.artifact_context.checkpoint.incident_id,
             current_phase=self._current_phase(branch, verifier_result.status),
             current_step=step_index,
-            selected_skills=context.checkpoint.selected_skills,
+            selected_skills=context.artifact_context.checkpoint.selected_skills,
             pending_verifier=self._pending_verifier(verifier_request, verifier_result.status),
             summary_of_progress=self._progress_summary(
                 branch=branch,
@@ -220,22 +227,22 @@ class IncidentFollowUpStep:
                 session_id=request.session_id,
                 step_index=step_index,
                 checkpoint_id=checkpoint.checkpoint_id,
-                checkpoint_path=context.checkpoint_path,
+                checkpoint_path=context.artifact_context.checkpoint_path,
                 summary_of_progress=checkpoint.summary_of_progress,
             )
         )
 
         return IncidentFollowUpStepResult(
             session_id=request.session_id,
-            incident_id=context.checkpoint.incident_id,
+            incident_id=context.artifact_context.checkpoint.incident_id,
             resumed_successfully=True,
             branch=branch,
             consulted_artifacts=ResumeArtifacts(
-                checkpoint_path=context.checkpoint_path,
-                transcript_path=context.transcript_path,
-                previous_checkpoint_id=context.checkpoint.checkpoint_id,
-                previous_phase=context.checkpoint.current_phase,
-                prior_transcript_event_count=len(context.transcript_events),
+                checkpoint_path=context.artifact_context.checkpoint_path,
+                transcript_path=context.artifact_context.transcript_path,
+                previous_checkpoint_id=context.artifact_context.checkpoint.checkpoint_id,
+                previous_phase=context.artifact_context.checkpoint.current_phase,
+                prior_transcript_event_count=len(context.artifact_context.transcript_events),
             ),
             runner_status=self._runner_status(branch, verifier_result.status),
             more_follow_up_required=self._more_follow_up_required(branch, verifier_result.status),
@@ -245,7 +252,7 @@ class IncidentFollowUpStep:
             permission_decision=permission_decision,
             tool_result=tool_result,
             investigation_output=investigation_output,
-            checkpoint_path=context.checkpoint_path,
+            checkpoint_path=context.artifact_context.checkpoint_path,
             checkpoint=checkpoint,
             no_op_reason=self._no_op_reason(
                 branch,
@@ -255,50 +262,21 @@ class IncidentFollowUpStep:
         )
 
     def _load_context(self, session_id: str) -> _ResumeContext:
-        checkpoint_path = self.checkpoint_root / f"{session_id}.json"
-        transcript_path = self.transcript_root / f"{session_id}.jsonl"
-        checkpoint = JsonCheckpointStore(checkpoint_path).load()
-        transcript_events = JsonlTranscriptStore(transcript_path).read_all()
-
-        triage_output = self._latest_triage_output(transcript_events)
-        triage_verifier_status = self._latest_triage_verifier_status(transcript_events)
-        triage_was_verified_complete = (
-            checkpoint.current_phase == "triage_completed"
-            and triage_verifier_status is VerifierStatus.PASS
+        artifact_context = SessionArtifactContext.load(
+            session_id,
+            checkpoint_root=self.checkpoint_root,
+            transcript_root=self.transcript_root,
         )
+        triage_resolution = artifact_context.required_triage_output()
         return _ResumeContext(
-            checkpoint_path=checkpoint_path,
-            transcript_path=transcript_path,
-            checkpoint=checkpoint,
-            transcript_events=transcript_events,
-            triage_output=triage_output,
-            triage_was_verified_complete=triage_was_verified_complete,
+            artifact_context=artifact_context,
+            triage_output=triage_resolution.artifact,
+            triage_was_verified_complete=(
+                artifact_context.phase_is("triage_completed")
+                and artifact_context.has_verified_triage_output()
+            ),
+            triage_insufficiency_reason=triage_resolution.reason,
         )
-
-    def _latest_triage_output(
-        self,
-        transcript_events: tuple[TranscriptEvent, ...],
-    ) -> IncidentTriageOutput | None:
-        for event in reversed(transcript_events):
-            if (
-                isinstance(event, ToolResultEvent)
-                and event.tool_name == "incident_payload_summary"
-                and event.result.output
-            ):
-                return IncidentTriageOutput.model_validate(event.result.output)
-        return None
-
-    def _latest_triage_verifier_status(
-        self,
-        transcript_events: tuple[TranscriptEvent, ...],
-    ) -> VerifierStatus | None:
-        for event in reversed(transcript_events):
-            if (
-                isinstance(event, VerifierResultEvent)
-                and event.verifier_name == "incident_triage_output"
-            ):
-                return event.result.status
-        return None
 
     def _select_branch(
         self,

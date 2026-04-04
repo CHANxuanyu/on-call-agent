@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "verifier-driven-incident-response-agent"
 version = "0.1.0"
-description = "Harness-first scaffold for a verifier-driven incident response agent."
+description = "Verifier-driven incident response runtime harness with resumable checkpoints and structured transcripts."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -23,11 +23,13 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = [
+  "src/context",
   "src/agent",
   "src/evals",
   "src/llm",
   "src/memory",
   "src/permissions",
+  "src/runtime",
   "src/skills",
   "src/tools",
   "src/transcripts",

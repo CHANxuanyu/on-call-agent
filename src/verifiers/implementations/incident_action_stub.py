@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from runtime.models import SyntheticFailure
 from tools.implementations.incident_action_stub import (
     ActionCandidateType,
     IncidentActionStubOutput,
@@ -42,6 +43,7 @@ class IncidentActionStubVerificationInput(BaseModel):
     recommendation_phase: str
     recommendation_verifier_passed: bool
     insufficiency_reason: str | None = None
+    prior_artifact_failure: SyntheticFailure | None = None
     recommendation_output: IncidentRecommendationOutput | None = None
     action_stub_output: IncidentActionStubOutput | None = None
 
@@ -129,6 +131,7 @@ class IncidentActionStubOutcomeVerifier:
             payload.recommendation_phase
             in {"recommendation_supported", "recommendation_conservative"}
             and payload.recommendation_verifier_passed
+            and payload.prior_artifact_failure is None
         ):
             diagnostics.append(
                 VerifierDiagnostic(
@@ -175,6 +178,16 @@ class IncidentActionStubOutcomeVerifier:
                     description=payload.insufficiency_reason,
                 ),
             ],
+            diagnostics=(
+                [
+                    VerifierDiagnostic(
+                        code=payload.prior_artifact_failure.code.value,
+                        message=payload.prior_artifact_failure.reason,
+                    )
+                ]
+                if payload.prior_artifact_failure is not None
+                else []
+            ),
         )
 
     def _verify_action_stub(

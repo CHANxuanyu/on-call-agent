@@ -1,39 +1,61 @@
-# Verifier-Driven Incident Response Agent
+# Verifier-Driven Incident Response Agent Harness
 
-Python incident-response harness focused on verifier-driven execution, durable artifacts, and
-approval-aware state transitions. This repository is not a generic chatbot demo and not an
-autonomous remediation system. It is a narrow, production-oriented agent runtime prototype that
-proves a disciplined chain from incident triage through recommendation and approval-gated action
-stubbing.
+Python runtime prototype for incident-response workflows built around verifier-driven state
+transitions, append-only transcripts, resumable checkpoints, and approval-aware boundaries. This
+repository is not a generic agent demo, not a coding agent, and not an autonomous remediation
+system. It is a narrow harness milestone that shows how to make incident-oriented agent behavior
+durable, inspectable, replayable, and safe before adding broader automation.
 
-## Why This Repo Exists
+## What This Runtime Is For
 
-Most agent demos optimize for breadth, UI, or model behavior. This project optimizes for harness
-quality:
+The runtime is designed for incident-handling style workflows where correctness of state and
+artifacts matters more than demo breadth:
 
-- append-only structured transcripts instead of hidden runtime state
+- triaging a structured incident payload
+- selecting one deterministic follow-up target
+- reading one deterministic evidence bundle
+- producing one verifier-backed hypothesis
+- producing one verifier-backed recommendation
+- surfacing one approval-gated action candidate stub
+- generating operator-facing handoff artifacts from durable runtime state
+
+## What It Is Not For
+
+This repository does not implement:
+
+- real remediation or mutation of external systems
+- a generic planner or open-ended autonomous loop
+- a coding-agent product surface like Claude Code
+- multi-agent orchestration
+- approval UI or reviewer workflow integration
+- external service integrations or production deployment infrastructure
+
+## Why This Is Not A Generic Agent Demo
+
+Most agent demos optimize for broad capability claims or UI. This repository optimizes for harness
+engineering:
+
+- verifier-driven completion instead of `"the model returned"`
+- append-only JSONL transcripts instead of hidden in-memory state
 - checkpoint-driven resumability instead of best-effort retries
-- verifier-driven completion instead of "the model said done"
-- explicit approval boundaries before any risky action candidate
-- replayable artifact flows that can be tested and inspected end to end
+- explicit approval boundaries instead of implicit risky autonomy
+- replayable fixtures and eval coverage instead of one-off screenshots
 
-The goal is to show engineering discipline around agent runtimes, not product polish.
+The point is to prove a reliable runtime spine, not to claim product completeness.
 
-## What It Implements
+## Runtime Spine
 
-The current milestone is one narrow incident workflow chain:
+Current implemented chain:
 
 `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
 
-Each step is deliberately small, typed, and replayable.
-
-### Step Chain
+Each slice is narrow and explicit.
 
 1. `IncidentTriageStep`
-   Reads a structured incident payload, emits transcript events, verifies triage output, and
+   Reads a structured incident payload, emits transcript events, verifies the triage output, and
    writes the first checkpoint.
 2. `IncidentFollowUpStep`
-   Resumes from checkpoint and transcript state, then either safely no-ops or selects exactly one
+   Resumes from checkpoint plus transcript state and either safely no-ops or selects exactly one
    read-only investigation target.
 3. `IncidentEvidenceStep`
    Reconstructs the selected target from durable artifacts and reads one deterministic evidence
@@ -46,140 +68,169 @@ Each step is deliberately small, typed, and replayable.
    Consumes one verified recommendation and produces exactly one approval-aware action candidate
    stub or one explicit conservative no-actionable outcome.
 
-No slice executes a real write action. The chain stops at an approval-gated stub on purpose.
+The chain stops there intentionally. It proves action candidacy and approval state without
+executing real write actions.
 
-## Core Harness Ideas
+## Runtime Infrastructure
 
-### Skills
+### Durable Contracts
 
-Skills live as durable assets under `skills/<name>/SKILL.md`. They are file-based, typed through
-frontmatter, and intended to remain stable inputs to future runtime behavior.
+- file-based skills under `skills/<skill>/SKILL.md`
+- typed tools, verifier results, transcript events, and checkpoints
+- deterministic local fixtures for replayable evidence
 
-### Transcripts
+### Execution Truth
 
-Execution history is stored as append-only JSONL with typed events such as:
+- append-only transcript events in `sessions/transcripts/<session_id>.jsonl`
+- resumable checkpoints in `sessions/checkpoints/<session_id>.json`
+- verifier-driven phase transitions at every implemented slice
 
-- `resume_started`
-- `model_step`
-- `permission_decision`
-- `tool_request`
-- `tool_result`
-- `verifier_result`
-- `checkpoint_written`
+### Shared Runtime Layers
 
-That transcript is part of the runtime contract, not just debug logging.
+- `SessionArtifactContext` loads checkpoint plus transcript once and reconstructs the latest
+  verified artifacts
+- synthetic failure invariants normalize malformed, missing, or interrupted artifact paths into
+  structured replayable failures
+- the shared resumable-slice harness centralizes resume, permission, tool, verifier, and
+  checkpoint wiring while keeping domain logic inside each step
+- permission provenance records why a decision was allowed, blocked, or would require approval
 
-### Checkpoints
+### Semantic Memory And Operator Artifacts
 
-Session checkpoints capture resumable state such as phase, selected skills, pending verifier, and
-approval state. Resume logic reads checkpoints and transcripts together; it does not rely on
-ephemeral in-memory state.
+- `IncidentWorkingMemory` stores a compact verified snapshot of current incident understanding
+- handoff context assembly builds one read-only operator-facing context object from checkpoint,
+  verified artifacts, and working memory
+- stable handoff artifacts are written to `sessions/handoffs/<incident_id>.json`
+- handoff artifacts can be regenerated deterministically from existing durable state
 
-### Verifiers
+## Approval Boundary Philosophy
 
-Every implemented slice is verifier-gated. A step is not considered complete because a tool ran or
-because a model-shaped function returned. Completion depends on a structured verifier result.
+This runtime is deliberately conservative.
 
-### Replay / Eval
+- Read-only steps can proceed when policy allows them.
+- Stronger evidence can justify a structured action candidate.
+- A candidate is still not execution.
+- Any future non-read-only action remains outside scope until approval and execution semantics are
+  designed explicitly.
 
-The repo includes a small replay-style eval runner that exercises the chain from fixed fixtures and
-asserts structured outcomes and verifier-driven transitions.
+That is why the runtime ends at an approval-gated action stub rather than continuing into
+remediation.
 
-### Approval Boundaries
+## Replay / Eval Story
 
-Riskier next steps are surfaced as structured candidates, not executed actions. The current chain
-records when approval would be required and persists that boundary into checkpoint state.
+The repo includes replay-style coverage over fixed fixtures, not a generic benchmark harness.
 
-## Current Supported Scenarios
+Implemented branches:
 
-The implemented replay coverage focuses on two deterministic scenarios:
-
-- Supported path:
+- supported branch:
   `recent_deployment -> deployment_regression -> validate_recent_deployment -> deployment_validation_candidate`
-- Conservative path:
+- conservative branch:
   `runbook -> insufficient_evidence -> investigate_more -> no_actionable_stub_yet`
 
-These are intentionally small. They exist to prove artifact-driven execution and replay, not to
-cover the full space of incident response behavior.
+These scenarios prove that the harness can carry verified state forward, remain conservative when
+evidence is weak, and keep the approval boundary explicit.
 
-## Deliberately Out Of Scope
+## Handoff Artifact Capability
 
-The repository does not currently implement:
+The current milestone includes an operator-facing derived artifact flow:
 
-- real remediation or mutation of external systems
-- approval UI or reviewer workflow integration
-- a generalized planner or workflow engine
+`SessionArtifactContext -> IncidentHandoffContextAssembler -> IncidentHandoffArtifactWriter`
+
+You can also regenerate the latest handoff artifact from a session id with the internal regenerator:
+
+```python
+from context.handoff_regeneration import IncidentHandoffArtifactRegenerator
+
+result = IncidentHandoffArtifactRegenerator().regenerate("session-id")
+```
+
+That writes or updates:
+
+- `sessions/handoffs/<incident_id>.json`
+
+The handoff artifact is derived output only. It is not part of the control plane.
+
+## Intentionally Out Of Scope
+
+- real execution or remediation
+- human approval UI
+- project-memory promotion
+- background extraction or compaction systems
+- generic planner / workflow engine
 - multi-agent orchestration
 - API server or end-user product surface
-- broad incident taxonomy or production integrations
 
-## Running The Current Milestone
+## Validation Commands
 
-Install the repo in editable mode with development dependencies:
+Install development dependencies:
 
 ```bash
 python -m pip install -e '.[dev]'
 ```
 
-Run the full test suite:
+Run the full validation stack:
 
 ```bash
+ruff check src tests docs
+mypy src tests
 pytest
 ```
 
-Run the replay coverage only:
+Run replay coverage only:
 
 ```bash
 pytest tests/integration/test_incident_chain_replay_eval.py
 ```
 
-Run the two fixed demo scenarios individually:
+Run the two fixed demo scenarios:
 
 ```bash
 pytest tests/integration/test_incident_chain_replay_eval.py::test_incident_chain_replay_eval_runs_supported_hypothesis_chain
 pytest tests/integration/test_incident_chain_replay_eval.py::test_incident_chain_replay_eval_runs_insufficient_evidence_chain
 ```
 
-Run static checks:
-
-```bash
-ruff check .
-mypy src tests
-```
-
-## Repository Layout
+## Repository Structure
 
 ```text
-skills/                     Durable skill assets (`SKILL.md`)
-sessions/schema/            Checkpoint schema examples
-src/agent/                  Narrow resumable step runners
-src/tools/implementations/  Deterministic read-only tools
+src/agent/                     Narrow resumable step runners
+src/context/                   Session artifact context, handoff assembly, handoff regeneration
+src/runtime/                   Shared harness and synthetic failure normalization
+src/tools/implementations/     Deterministic read-only tool actions
 src/verifiers/implementations/ Structured verifier logic
-src/transcripts/            Transcript event models and JSONL persistence
-src/memory/                 Checkpoint models and storage
-src/evals/                  Replay-style eval runner
-evals/fixtures/             Fixed scenario and evidence fixtures
-tests/integration/          End-to-end slice coverage
-tests/unit/                 Contract, tool, and verifier validation
-docs/                       Architecture, demo, resume, and interview packaging
+src/memory/                    Checkpoints and incident working-memory persistence
+src/transcripts/               Typed transcript models and JSONL storage
+src/evals/                     Replay/eval runner
+skills/                        Durable skill assets
+evals/fixtures/                Fixed evidence and scenario fixtures
+tests/unit/                    Contract and component tests
+tests/integration/             End-to-end slice and replay coverage
+docs/                          Architecture, demo, interview, and resume materials
 ```
 
 ## Milestone Status
 
-Current milestone: the repository demonstrates a full narrow harness chain from triage through
-approval-gated action stubbing, with:
+This repository should be read as a completed runtime milestone, not a finished product.
 
-- typed contracts for skills, transcripts, checkpoints, tools, and verifiers
-- structured JSONL transcripts and resumable checkpoint state
-- verifier-driven phase transitions at every implemented step
-- replay coverage for both a supported and a conservative branch
-- explicit approval gating before any non-read-only action candidate
+What is complete for this milestone:
 
-This is a harness milestone, not a finished incident-response product.
+- verifier-gated slice chain from triage through approval-aware action candidacy
+- checkpoint plus transcript resumability
+- replayable artifact reconstruction through `SessionArtifactContext`
+- synthetic failure normalization for malformed or partial runtime paths
+- permission provenance and explicit approval-state persistence
+- first incident-working-memory slice
+- operator-facing handoff assembly, artifact writing, and deterministic regeneration
+
+What is intentionally deferred:
+
+- real execution semantics
+- broader memory layering beyond the first incident-working-memory slice
+- external approvals, integrations, and product surface
 
 ## Additional Docs
 
 - [Architecture Summary](docs/architecture.md)
 - [Demo Guide](docs/demo.md)
-- [Resume Bullets](docs/resume.md)
+- [Resume Framing](docs/resume.md)
 - [Interview Guide](docs/interview.md)
+- [Project Summary](docs/project_summary.md)

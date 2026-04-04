@@ -92,7 +92,12 @@ class IncidentTriageStep:
             name=self.tool.definition.name,
             arguments=request.model_dump(mode="json", exclude={"session_id"}),
         )
-        permission_decision = self.permission_policy.decide(self.tool.definition)
+        permission_decision = self.permission_policy.decide(
+            self.tool.definition,
+            notes=[
+                "Step 'incident_triage' evaluated this tool directly in the initial slice."
+            ],
+        )
         transcript_store.append(
             PermissionDecisionEvent(
                 session_id=request.session_id,

@@ -8,9 +8,22 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.state import AgentStatus
-from memory.checkpoints import JsonCheckpointStore, PendingVerifier, SessionCheckpoint
-from permissions.models import PermissionAction, PermissionDecision
+from context.session_artifacts import SessionArtifactContext
+from memory.checkpoints import SessionCheckpoint
+from memory.incident_working_memory import (
+    IncidentWorkingMemory,
+    JsonIncidentWorkingMemoryStore,
+    LeadingHypothesisSnapshot,
+    RecommendationSnapshot,
+)
+from permissions.models import PermissionDecision
 from permissions.policy import PermissionPolicy
+from runtime.harness import (
+    ResumableSliceHarness,
+    combine_artifact_failure,
+    pending_verifier_for_status,
+)
+from runtime.models import SyntheticFailure
 from tools.implementations.incident_hypothesis import IncidentHypothesisOutput
 from tools.implementations.incident_recommendation import (
     IncidentRecommendationBuilderTool,
@@ -20,17 +33,6 @@ from tools.implementations.incident_recommendation import (
     recommendation_requires_approval,
 )
 from tools.models import ToolCall, ToolResult
-from transcripts.models import (
-    CheckpointWrittenEvent,
-    ModelStepEvent,
-    PermissionDecisionEvent,
-    ResumeStartedEvent,
-    ToolRequestEvent,
-    ToolResultEvent,
-    TranscriptEvent,
-    VerifierResultEvent,
-)
-from transcripts.writer import JsonlTranscriptStore
 from verifiers.base import VerifierRequest, VerifierResult, VerifierStatus
 from verifiers.implementations.incident_recommendation import (
     IncidentRecommendationOutcomeVerifier,
@@ -82,6 +84,7 @@ class IncidentRecommendationStepResult(BaseModel):
     permission_decision: PermissionDecision | None = None
     tool_result: ToolResult | None = None
     recommendation_output: IncidentRecommendationOutput | None = None
+    artifact_failure: SyntheticFailure | None = None
     checkpoint_path: Path
     checkpoint: SessionCheckpoint
     insufficiency_reason: str | None = None
@@ -89,12 +92,12 @@ class IncidentRecommendationStepResult(BaseModel):
 
 @dataclass(slots=True)
 class _RecommendationResumeContext:
-    checkpoint_path: Path
-    transcript_path: Path
-    checkpoint: SessionCheckpoint
-    transcript_events: tuple[TranscriptEvent, ...]
+    harness: ResumableSliceHarness
+    artifact_context: SessionArtifactContext
     hypothesis_output: IncidentHypothesisOutput | None
     hypothesis_verifier_passed: bool
+    hypothesis_failure: SyntheticFailure | None = None
+    hypothesis_insufficiency_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -116,28 +119,16 @@ class IncidentRecommendationStep:
         request: IncidentRecommendationStepRequest,
     ) -> IncidentRecommendationStepResult:
         context = self._load_context(request.session_id)
-        step_index = context.checkpoint.current_step + 1
-        transcript_store = JsonlTranscriptStore(context.transcript_path)
-        checkpoint_store = JsonCheckpointStore(context.checkpoint_path)
+        harness = context.harness
+        step_index = harness.step_index
 
-        transcript_store.append(
-            ResumeStartedEvent(
-                session_id=request.session_id,
-                step_index=step_index,
-                checkpoint_id=context.checkpoint.checkpoint_id,
-                reason=request.resume_reason,
-            )
-        )
+        harness.emit_resume_started(reason=request.resume_reason)
 
         branch, insufficiency_reason = self._select_branch(context)
         hypothesis_output = context.hypothesis_output
-        transcript_store.append(
-            ModelStepEvent(
-                session_id=request.session_id,
-                step_index=step_index,
-                summary=self._model_step_summary(branch, context, hypothesis_output),
-                planned_verifiers=[self.verifier.definition.name],
-            )
+        harness.emit_model_step(
+            summary=self._model_step_summary(branch, context, hypothesis_output),
+            planned_verifiers=[self.verifier.definition.name],
         )
 
         permission_decision: PermissionDecision | None = None
@@ -145,18 +136,6 @@ class IncidentRecommendationStep:
         recommendation_output: IncidentRecommendationOutput | None = None
 
         if branch is RecommendationBranch.BUILD_RECOMMENDATION:
-            permission_decision = self.permission_policy.decide(self.tool.definition)
-            transcript_store.append(
-                PermissionDecisionEvent(
-                    session_id=request.session_id,
-                    step_index=step_index,
-                    decision=permission_decision,
-                )
-            )
-            if permission_decision.action is not PermissionAction.ALLOW:
-                msg = "incident recommendation tool must remain read-only and allowed by default"
-                raise RuntimeError(msg)
-
             if hypothesis_output is None:
                 msg = "recommendation branch requires a durable hypothesis record"
                 raise RuntimeError(msg)
@@ -165,35 +144,33 @@ class IncidentRecommendationStep:
                 name=self.tool.definition.name,
                 arguments={"hypothesis_output": hypothesis_output.model_dump(mode="json")},
             )
-            call_id = f"{request.session_id}-incident-recommendation-tool"
-            transcript_store.append(
-                ToolRequestEvent(
-                    session_id=request.session_id,
-                    step_index=step_index,
-                    call_id=call_id,
-                    tool_call=tool_call,
-                )
+            tool_outcome = await harness.execute_read_only_tool(
+                tool=self.tool,
+                permission_policy=self.permission_policy,
+                tool_call=tool_call,
+                call_id=f"{request.session_id}-incident-recommendation-tool",
+                output_model=IncidentRecommendationOutput,
+                permission_denied_message=(
+                    "incident recommendation tool must remain read-only and allowed by default"
+                ),
             )
-            tool_result = await self.tool.execute(tool_call)
-            transcript_store.append(
-                ToolResultEvent(
-                    session_id=request.session_id,
-                    step_index=step_index,
-                    call_id=call_id,
-                    tool_name=self.tool.definition.name,
-                    result=tool_result,
-                )
-            )
-            recommendation_output = self._parse_recommendation_output(tool_result)
+            permission_decision = tool_outcome.permission_decision
+            tool_result = tool_outcome.tool_result
+            recommendation_output = tool_outcome.output
 
         verifier_request = VerifierRequest(
             name=self.verifier.definition.name,
-            target=context.checkpoint.incident_id,
+            target=context.artifact_context.checkpoint.incident_id,
             inputs={
                 "branch": branch,
-                "hypothesis_phase": context.checkpoint.current_phase,
+                "hypothesis_phase": context.artifact_context.checkpoint.current_phase,
                 "hypothesis_verifier_passed": context.hypothesis_verifier_passed,
                 "insufficiency_reason": insufficiency_reason,
+                "prior_artifact_failure": (
+                    context.hypothesis_failure.model_dump(mode="json")
+                    if context.hypothesis_failure is not None
+                    else None
+                ),
                 "hypothesis_output": (
                     hypothesis_output.model_dump(mode="json")
                     if hypothesis_output is not None
@@ -206,58 +183,61 @@ class IncidentRecommendationStep:
                 ),
             },
         )
-        verifier_result = await self.verifier.verify(verifier_request)
-        transcript_store.append(
-            VerifierResultEvent(
-                session_id=request.session_id,
-                step_index=step_index,
-                verifier_name=self.verifier.definition.name,
-                request=verifier_request,
-                result=verifier_result,
-            )
+        verifier_result = await harness.execute_verifier(
+            verifier=self.verifier,
+            request=verifier_request,
+        )
+        artifact_failure = combine_artifact_failure(
+            prior_failure=context.hypothesis_failure,
+            tool_result=tool_result,
+            verifier_result=verifier_result,
         )
 
         checkpoint = SessionCheckpoint(
             checkpoint_id=f"{request.session_id}-incident-recommendation",
             session_id=request.session_id,
-            incident_id=context.checkpoint.incident_id,
+            incident_id=context.artifact_context.checkpoint.incident_id,
             current_phase=self._current_phase(
                 branch=branch,
                 verifier_status=verifier_result.status,
                 recommendation_output=recommendation_output,
+                artifact_failure=artifact_failure,
             ),
             current_step=step_index,
-            selected_skills=context.checkpoint.selected_skills,
-            pending_verifier=self._pending_verifier(verifier_request, verifier_result.status),
+            selected_skills=context.artifact_context.checkpoint.selected_skills,
+            pending_verifier=pending_verifier_for_status(
+                verifier_name=self.verifier.definition.name,
+                verifier_request=verifier_request,
+                verifier_status=verifier_result.status,
+            ),
             summary_of_progress=self._progress_summary(
                 branch=branch,
                 recommendation_output=recommendation_output,
                 verifier_result=verifier_result,
                 insufficiency_reason=insufficiency_reason,
+                artifact_failure=artifact_failure,
             ),
         )
-        checkpoint_store.write(checkpoint)
-        transcript_store.append(
-            CheckpointWrittenEvent(
-                session_id=request.session_id,
-                step_index=step_index,
-                checkpoint_id=checkpoint.checkpoint_id,
-                checkpoint_path=context.checkpoint_path,
-                summary_of_progress=checkpoint.summary_of_progress,
-            )
+        harness.write_checkpoint(checkpoint)
+        self._write_incident_working_memory(
+            session_id=request.session_id,
+            checkpoint=checkpoint,
+            verifier_result=verifier_result,
+            hypothesis_output=hypothesis_output,
+            recommendation_output=recommendation_output,
         )
 
         return IncidentRecommendationStepResult(
             session_id=request.session_id,
-            incident_id=context.checkpoint.incident_id,
+            incident_id=context.artifact_context.checkpoint.incident_id,
             resumed_successfully=branch is RecommendationBranch.BUILD_RECOMMENDATION,
             branch=branch,
             consulted_artifacts=RecommendationResumeArtifacts(
-                checkpoint_path=context.checkpoint_path,
-                transcript_path=context.transcript_path,
-                previous_checkpoint_id=context.checkpoint.checkpoint_id,
-                previous_phase=context.checkpoint.current_phase,
-                prior_transcript_event_count=len(context.transcript_events),
+                checkpoint_path=context.artifact_context.checkpoint_path,
+                transcript_path=context.artifact_context.transcript_path,
+                previous_checkpoint_id=context.artifact_context.checkpoint.checkpoint_id,
+                previous_phase=context.artifact_context.checkpoint.current_phase,
+                prior_transcript_event_count=len(context.artifact_context.transcript_events),
                 hypothesis_verifier_passed=context.hypothesis_verifier_passed,
             ),
             consumed_hypothesis_output=hypothesis_output,
@@ -267,7 +247,11 @@ class IncidentRecommendationStep:
                 else None
             ),
             verifier_name=self.verifier.definition.name,
-            runner_status=self._runner_status(branch, verifier_result.status),
+            runner_status=self._runner_status(
+                branch,
+                verifier_result.status,
+                artifact_failure,
+            ),
             hypothesis_supported=(
                 hypothesis_output.evidence_supported if hypothesis_output is not None else None
             ),
@@ -287,80 +271,42 @@ class IncidentRecommendationStep:
             permission_decision=permission_decision,
             tool_result=tool_result,
             recommendation_output=recommendation_output,
-            checkpoint_path=context.checkpoint_path,
+            artifact_failure=artifact_failure,
+            checkpoint_path=context.artifact_context.checkpoint_path,
             checkpoint=checkpoint,
             insufficiency_reason=insufficiency_reason,
         )
 
     def _load_context(self, session_id: str) -> _RecommendationResumeContext:
-        checkpoint_path = self.checkpoint_root / f"{session_id}.json"
-        transcript_path = self.transcript_root / f"{session_id}.jsonl"
-        checkpoint = JsonCheckpointStore(checkpoint_path).load()
-        transcript_events = JsonlTranscriptStore(transcript_path).read_all()
-
-        return _RecommendationResumeContext(
-            checkpoint_path=checkpoint_path,
-            transcript_path=transcript_path,
-            checkpoint=checkpoint,
-            transcript_events=transcript_events,
-            hypothesis_output=self._latest_hypothesis_output(transcript_events),
-            hypothesis_verifier_passed=self._latest_hypothesis_verifier_status(
-                transcript_events
-            )
-            is VerifierStatus.PASS,
+        harness = ResumableSliceHarness.load(
+            session_id=session_id,
+            step_name="incident_recommendation",
+            checkpoint_root=self.checkpoint_root,
+            transcript_root=self.transcript_root,
+            working_memory_root=self._working_memory_root(),
         )
-
-    def _latest_hypothesis_output(
-        self,
-        transcript_events: tuple[TranscriptEvent, ...],
-    ) -> IncidentHypothesisOutput | None:
-        for event in reversed(transcript_events):
-            if (
-                isinstance(event, ToolResultEvent)
-                and event.tool_name == "incident_hypothesis_builder"
-                and event.result.output
-            ):
-                return IncidentHypothesisOutput.model_validate(event.result.output)
-        return None
-
-    def _latest_hypothesis_verifier_status(
-        self,
-        transcript_events: tuple[TranscriptEvent, ...],
-    ) -> VerifierStatus | None:
-        for event in reversed(transcript_events):
-            if (
-                isinstance(event, VerifierResultEvent)
-                and event.verifier_name == "incident_hypothesis_outcome"
-            ):
-                return event.result.status
-        return None
+        artifact_context = harness.artifact_context
+        hypothesis_resolution = artifact_context.hypothesis_output_for_recommendation_step()
+        hypothesis_record = artifact_context.latest_hypothesis_output()
+        return _RecommendationResumeContext(
+            harness=harness,
+            artifact_context=artifact_context,
+            hypothesis_output=hypothesis_resolution.artifact,
+            hypothesis_verifier_passed=hypothesis_record.verifier_status is VerifierStatus.PASS,
+            hypothesis_failure=hypothesis_resolution.failure,
+            hypothesis_insufficiency_reason=hypothesis_resolution.reason,
+        )
 
     def _select_branch(
         self,
         context: _RecommendationResumeContext,
     ) -> tuple[RecommendationBranch, str | None]:
-        if (
-            context.checkpoint.current_phase
-            in {"hypothesis_supported", "hypothesis_insufficient_evidence"}
-            and context.hypothesis_verifier_passed
-            and context.hypothesis_output is not None
-        ):
+        if context.hypothesis_output is not None:
             return RecommendationBranch.BUILD_RECOMMENDATION, None
-        if (
-            context.checkpoint.current_phase
-            in {"hypothesis_supported", "hypothesis_insufficient_evidence"}
-            and context.hypothesis_verifier_passed
-            and context.hypothesis_output is None
-        ):
-            return (
-                RecommendationBranch.INSUFFICIENT_STATE,
-                "Hypothesis artifacts indicate a verified hypothesis record should exist, "
-                "but the transcript is missing it.",
-            )
         return (
             RecommendationBranch.INSUFFICIENT_STATE,
-            "Prior artifacts do not yet contain a verified hypothesis record for "
-            "recommendation building.",
+            context.hypothesis_insufficiency_reason
+            or "Prior artifacts do not yet contain a verified incident hypothesis.",
         )
 
     def _model_step_summary(
@@ -374,26 +320,28 @@ class IncidentRecommendationStep:
                 f"Resume recovered hypothesis {hypothesis_output.hypothesis_type} from "
                 "durable artifacts and will build one deterministic recommendation."
             )
+        if context.hypothesis_failure is not None:
+            return (
+                "Resume found a structured hypothesis artifact failure in phase "
+                f"{context.artifact_context.checkpoint.current_phase}, so the "
+                "recommendation step will record a failure-aware insufficient-state branch."
+            )
         return (
-            f"Resume did not find a usable verified hypothesis record in phase "
-            f"{context.checkpoint.current_phase}, so the recommendation step will record "
+            "Resume did not find a usable verified hypothesis record in phase "
+            f"{context.artifact_context.checkpoint.current_phase}, so the "
+            "recommendation step will record "
             "an insufficient-state branch."
         )
-
-    def _parse_recommendation_output(
-        self,
-        tool_result: ToolResult,
-    ) -> IncidentRecommendationOutput | None:
-        if not tool_result.output:
-            return None
-        return IncidentRecommendationOutput.model_validate(tool_result.output)
 
     def _current_phase(
         self,
         branch: RecommendationBranch,
         verifier_status: VerifierStatus,
         recommendation_output: IncidentRecommendationOutput | None,
+        artifact_failure: SyntheticFailure | None,
     ) -> str:
+        if artifact_failure is not None:
+            return "recommendation_failed_artifacts"
         if verifier_status is VerifierStatus.UNVERIFIED:
             return "recommendation_unverified"
         if verifier_status is VerifierStatus.FAIL:
@@ -409,25 +357,19 @@ class IncidentRecommendationStep:
             return "recommendation_conservative"
         return "recommendation_supported"
 
-    def _pending_verifier(
-        self,
-        verifier_request: VerifierRequest,
-        verifier_status: VerifierStatus,
-    ) -> PendingVerifier | None:
-        if verifier_status is VerifierStatus.PASS:
-            return None
-        return PendingVerifier(
-            verifier_name=self.verifier.definition.name,
-            request=verifier_request,
-        )
-
     def _progress_summary(
         self,
         branch: RecommendationBranch,
         recommendation_output: IncidentRecommendationOutput | None,
         verifier_result: VerifierResult,
         insufficiency_reason: str | None,
+        artifact_failure: SyntheticFailure | None,
     ) -> str:
+        if artifact_failure is not None:
+            return (
+                f"Recommendation step encountered a structured artifact failure: "
+                f"{artifact_failure.reason} Verifier status: {verifier_result.status}."
+            )
         if branch is RecommendationBranch.INSUFFICIENT_STATE:
             return (
                 f"Recommendation step deferred. Reason: {insufficiency_reason} "
@@ -447,7 +389,10 @@ class IncidentRecommendationStep:
         self,
         branch: RecommendationBranch,
         verifier_status: VerifierStatus,
+        artifact_failure: SyntheticFailure | None,
     ) -> AgentStatus:
+        if artifact_failure is not None:
+            return AgentStatus.FAILED
         if verifier_status is VerifierStatus.UNVERIFIED:
             return AgentStatus.VERIFYING
         if verifier_status is VerifierStatus.FAIL:
@@ -455,3 +400,90 @@ class IncidentRecommendationStep:
         if branch is RecommendationBranch.BUILD_RECOMMENDATION:
             return AgentStatus.RUNNING
         return AgentStatus.VERIFYING
+
+    def _working_memory_root(self) -> Path:
+        return self.checkpoint_root.parent / "working_memory"
+
+    def _write_incident_working_memory(
+        self,
+        *,
+        session_id: str,
+        checkpoint: SessionCheckpoint,
+        verifier_result: VerifierResult,
+        hypothesis_output: IncidentHypothesisOutput | None,
+        recommendation_output: IncidentRecommendationOutput | None,
+    ) -> None:
+        if (
+            verifier_result.status is not VerifierStatus.PASS
+            or hypothesis_output is None
+            or recommendation_output is None
+        ):
+            return
+
+        JsonIncidentWorkingMemoryStore.for_incident(
+            checkpoint.incident_id,
+            root=self._working_memory_root(),
+        ).write(
+            IncidentWorkingMemory(
+                incident_id=checkpoint.incident_id,
+                service=recommendation_output.service,
+                source_session_id=session_id,
+                source_checkpoint_id=checkpoint.checkpoint_id,
+                source_phase=checkpoint.current_phase,
+                last_updated_by_step="incident_recommendation",
+                leading_hypothesis=LeadingHypothesisSnapshot(
+                    hypothesis_type=hypothesis_output.hypothesis_type,
+                    summary=hypothesis_output.rationale_summary,
+                    evidence_supported=hypothesis_output.evidence_supported,
+                ),
+                unresolved_gaps=hypothesis_output.unresolved_gaps,
+                important_evidence_references=self._important_evidence_references(
+                    hypothesis_output,
+                    recommendation_output,
+                ),
+                recommendation=RecommendationSnapshot(
+                    recommendation_type=recommendation_output.recommendation_type,
+                    summary=recommendation_output.action_summary,
+                    required_approval_level=recommendation_output.required_approval_level,
+                    more_investigation_required=(
+                        recommendation_output.more_investigation_required
+                    ),
+                ),
+                compact_handoff_note=self._compact_handoff_note(
+                    hypothesis_output,
+                    recommendation_output,
+                ),
+            )
+        )
+
+    def _important_evidence_references(
+        self,
+        hypothesis_output: IncidentHypothesisOutput,
+        recommendation_output: IncidentRecommendationOutput,
+    ) -> list[str]:
+        return list(
+            dict.fromkeys(
+                [
+                    f"evidence:{hypothesis_output.evidence_snapshot_id}",
+                    f"investigation_target:{hypothesis_output.evidence_investigation_target}",
+                    *recommendation_output.supporting_artifact_refs,
+                ]
+            )
+        )
+
+    def _compact_handoff_note(
+        self,
+        hypothesis_output: IncidentHypothesisOutput,
+        recommendation_output: IncidentRecommendationOutput,
+    ) -> str:
+        approval_note = (
+            "Future non-read-only work remains approval-gated."
+            if recommendation_requires_approval(recommendation_output)
+            else "No approval-gated action candidate is justified yet."
+        )
+        return (
+            f"Current verified hypothesis for {hypothesis_output.service} is "
+            f"{hypothesis_output.hypothesis_type}. "
+            f"Current recommendation is {recommendation_output.recommendation_type}. "
+            f"{approval_note}"
+        )

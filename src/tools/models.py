@@ -5,7 +5,9 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, TypeAlias
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from runtime.models import SyntheticFailure
 
 JsonDict: TypeAlias = dict[str, Any]
 
@@ -43,8 +45,11 @@ class ToolCall(BaseModel):
 class ToolFailure(BaseModel):
     """Structured failure information for synthetic or runtime errors."""
 
+    model_config = ConfigDict(extra="forbid")
+
     code: str
     message: str
+    synthetic_failure: SyntheticFailure | None = None
 
 
 class ToolResult(BaseModel):
