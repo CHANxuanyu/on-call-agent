@@ -66,6 +66,16 @@ Example shell transcript:
 That transcript is the fastest reviewer path. The smoke checklist covers the same shell surface
 with extra checks for fresh-session behavior, healthy/no-action gating, and `auto-safe`.
 
+If you want a panel-first product surface instead of the shell, start:
+
+```bash
+oncall-agent console
+```
+
+The console keeps sessions, incident detail, timeline, approval, verification, and handoff as the
+main surface. The assistant pane is attached to the selected session and only explains current
+runtime truth; it is not a generic chat-first agent UI.
+
 `auto-safe` is also available in the shell, but it is fail-closed by default. It only auto-runs
 the bounded rollback when `.oncall/settings.toml` enables the policy and the exact live target
 base URL is allowlisted. If those checks do not pass, the session degrades to `semi-auto` and the

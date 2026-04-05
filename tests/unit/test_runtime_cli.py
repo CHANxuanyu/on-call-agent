@@ -371,3 +371,29 @@ def test_shell_command_invokes_operator_shell(
 
     assert exit_code == 17
     assert captured["initial_mode"] is OperatorAutonomyMode.SEMI_AUTO
+
+
+def test_console_command_invokes_operator_console_server(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeConsoleServer:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+            self.base_url = "http://127.0.0.1:8080"
+
+        def serve_forever(self) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    monkeypatch.setattr("runtime.cli.OperatorConsoleServer", _FakeConsoleServer)
+
+    exit_code = main(["console", "--port", "8080"])
+
+    assert exit_code == 0
+    assert captured["port"] == 8080
+    assert "operator console ready at http://127.0.0.1:8080" in capsys.readouterr().out

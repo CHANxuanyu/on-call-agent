@@ -17,6 +17,7 @@ from context.handoff_regeneration import (
     IncidentHandoffArtifactRegenerator,
 )
 from memory.checkpoints import OperatorAutonomyMode
+from runtime.console_server import OperatorConsoleServer
 from runtime.eval_surface import (
     build_eval_list_payload,
     list_eval_scenarios,
@@ -71,6 +72,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_verify_outcome(args)
     if args.command == "run-demo-target":
         return _run_demo_target(args)
+    if args.command == "console":
+        return _run_console(args)
     if args.command == "shell":
         return _run_shell(args)
 
@@ -176,6 +179,25 @@ def _build_parser() -> argparse.ArgumentParser:
     run_demo_target.add_argument("--bad-version", default="2.1.0")
     run_demo_target.add_argument("--previous-version", default="2.0.9")
     run_demo_target.add_argument("--json", action="store_true", dest="json_output")
+
+    console = subparsers.add_parser("console")
+    console.add_argument("--host", default="127.0.0.1")
+    console.add_argument("--port", type=int, default=8080)
+    console.add_argument(
+        "--checkpoint-root",
+        type=Path,
+        default=Path("sessions/checkpoints"),
+    )
+    console.add_argument(
+        "--transcript-root",
+        type=Path,
+        default=Path("sessions/transcripts"),
+    )
+    console.add_argument(
+        "--handoff-root",
+        type=Path,
+        default=Path("sessions/handoffs"),
+    )
 
     shell = subparsers.add_parser("shell")
     shell.add_argument(
@@ -396,6 +418,27 @@ def _run_demo_target(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(f"demo target ready at {server.base_url} for service {args.service}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        server.close()
+    return 0
+
+
+def _run_console(args: argparse.Namespace) -> int:
+    server = OperatorConsoleServer(
+        host=args.host,
+        port=args.port,
+        checkpoint_root=args.checkpoint_root,
+        transcript_root=args.transcript_root,
+        handoff_root=args.handoff_root,
+    )
+    print(
+        f"operator console ready at {server.base_url} "
+        f"(checkpoints={args.checkpoint_root})"
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

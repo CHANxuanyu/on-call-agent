@@ -10,12 +10,21 @@ system. The point of the repository is to show a reliable harness spine for inci
 typed slices, append-only transcripts, resumable checkpoints, explicit approval boundaries,
 external outcome verification, and durable recovery through `SessionArtifactContext`.
 
+The repository also includes a narrow operator-facing product slice for `On-Call Copilot`: a
+panel-first incident decision and verification surface over that same runtime.
+
 ## Start Here
 
 - [Usage Guide](docs/usage.md): practical command reference for the shell and direct CLI surfaces
 - [Demo Guide](docs/demo.md): 5-minute walkthrough of the current live deployment-regression path
 - [Architecture Summary](docs/architecture.md): runtime seams, durable-state layers, and safety
   boundaries
+- [Product Brief](docs/product/PRODUCT_BRIEF.md): controlling product spec for `On-Call Copilot`
+- [Product One-Pager](docs/product/ONE_PAGER.md): recruiter-readable overview of the current
+  product slice
+- [Personas](docs/product/PERSONAS.md) and [User Journeys](docs/product/USER_JOURNEYS.md):
+  operator-facing product framing for the current workflow
+- [Product Metrics](docs/product/METRICS.md): proto-product success measures for the current slice
 - [Operator Shell Smoke Checklist](docs/operator_shell_smoke_checklist.md): human-guided local
   rerun of the current shell flows
 - [Project Summary](docs/project_summary.md): short repository framing
@@ -83,11 +92,38 @@ Launch the operator shell:
 oncall-agent shell
 ```
 
+Launch the minimal browser-based Operator Console:
+
+```bash
+oncall-agent console
+```
+
+It serves a panel-first local console over the same runtime truth and adds a session-scoped
+assistant pane that explains the selected session without becoming workflow authority.
+
+## Operator Console
+
+The Operator Console is a minimal local browser surface over the existing checkpoints, transcripts,
+`SessionArtifactContext`, verification artifacts, and handoff artifacts.
+
+It exposes:
+
+- recent sessions
+- session detail
+- recent timeline activity
+- approval / deny controls
+- verification and handoff access
+- a secondary session-scoped assistant pane
+
+The assistant pane is intentionally narrow. It explains and summarizes the selected session, but
+it does not persist chat history, own incident state, own approval state, or bypass the existing
+approval and verification seams.
+
 ## Operator Shell
 
-The shell is the main operator-facing surface over the existing runtime. It does not introduce a
-second state layer; it uses the same checkpoints, transcripts, working memory, inspection, and
-handoff seams as the direct CLI.
+The shell remains the terminal-first operator surface over the existing runtime. It does not
+introduce a second state layer; it uses the same checkpoints, transcripts, working memory,
+inspection, and handoff seams as the direct CLI.
 
 Core shell commands:
 
@@ -189,6 +225,12 @@ existing bounded rollback slice.
 
 ## Deeper Docs
 
+- [Product Brief](docs/product/PRODUCT_BRIEF.md)
+- [Product One-Pager](docs/product/ONE_PAGER.md)
+- [Personas](docs/product/PERSONAS.md)
+- [User Journeys](docs/product/USER_JOURNEYS.md)
+- [Product Metrics](docs/product/METRICS.md)
+- [Positioning](docs/product/POSITIONING.md)
 - [Usage Guide](docs/usage.md)
 - [Demo Guide](docs/demo.md)
 - [Architecture Summary](docs/architecture.md)

@@ -4,6 +4,9 @@
 
 This repository builds a **verifier-driven incident response agent** inspired by harness engineering patterns from modern coding agents.
 
+The operator-facing product direction for this repository is **On-Call Copilot**.
+Treat `docs/product/PRODUCT_BRIEF.md` as the controlling product spec for product-facing work.
+
 The goal is **not** to clone Claude Code or build a generic chatbot.
 The goal is to build a **production-oriented agent harness** for on-call / operations / troubleshooting workflows, with strong emphasis on:
 
@@ -27,6 +30,13 @@ We borrow harness ideas from TypeScript-first systems, but the implementation sh
 
 ## Product Definition
 
+Product-facing work should be read through the `On-Call Copilot` lens:
+
+- an operator-facing incident decision and verification product
+- grounded in the existing verifier-driven runtime
+- intentionally narrow in scope
+- distinct from a coding copilot or generic agent platform
+
 The agent should help with incident handling workflows such as:
 
 - triaging alerts
@@ -39,6 +49,23 @@ The agent should help with incident handling workflows such as:
 The agent is **verifier-driven**:
 execution is not considered complete just because the model says so.
 A task is only considered complete when corresponding verifiers confirm success.
+
+## Specification Precedence
+
+When documents or ideas pull in different directions, use this precedence order:
+
+1. implemented runtime truth plus durable artifacts
+2. `docs/architecture.md`
+3. `docs/product/PRODUCT_BRIEF.md`
+4. the relevant phase PRD under `docs/product/`
+5. `README.md`
+
+Interpretation rules:
+
+- runtime truth and architecture constraints override product wishfulness
+- `PRODUCT_BRIEF.md` controls product direction and scope
+- phase PRDs refine the product brief for a slice; they do not override runtime constraints
+- `README.md` is a landing-page summary, not the authority for broader scope or behavior changes
 
 ---
 
@@ -89,9 +116,11 @@ Favor typed models, validation, and clear interfaces over loose dynamic behavior
 
 The following are explicitly out of scope unless later approved:
 
+- turning the repo into a generic planner
 - building a generic personal assistant
 - building a travel planner
 - building a fully autonomous DevOps platform
+- building a broad autonomous remediation agent
 - adding multi-agent complexity without clear benefit
 - adding heavy framework dependencies just to look advanced
 - optimizing for demo visuals over engineering quality
@@ -486,13 +515,20 @@ Do **not** optimize for:
 
 Before changing code, Codex should:
 
+* read `README.md`
 * read this file
+* read `docs/architecture.md`
+* read `docs/product/PRODUCT_BRIEF.md`
+* read the relevant phase PRD in `docs/product/` when the task is product-slice-specific
 * inspect repository layout
 * inspect relevant module interfaces
 * identify existing invariants
 * propose a brief plan for non-trivial work
 
 If the task is large, split it into phases instead of attempting a giant patch.
+
+For product-facing work, `docs/product/PRODUCT_BRIEF.md` is the controlling spec. Do not add
+features or framing that conflict with it unless the brief itself is intentionally updated.
 
 ---
 
@@ -584,6 +620,11 @@ Avoid these common mistakes:
 
 This is an agent engineering project.
 The core deliverable is a reliable, explainable, verifier-driven harness for incident response workflows.
+
+Future product work should strengthen the repository as an operator-facing `On-Call Copilot`, not
+turn it into a generic planner, generic coding copilot, or broad autonomous remediation agent.
+Preserve approval gating, runtime truth in checkpoints and transcripts, `SessionArtifactContext`,
+and the existing narrow architecture boundaries.
 
 Every important design choice should make the project:
 

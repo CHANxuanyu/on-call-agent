@@ -1,7 +1,8 @@
 # Usage Guide
 
-This guide is the practical CLI entrypoint for operators and reviewers. The recommended operator
-surface is the shell; the direct CLI commands remain the underlying runtime surfaces.
+This guide is the practical CLI entrypoint for operators and reviewers. The minimal browser
+Operator Console and the shell are thin product surfaces over the same runtime truth; the direct
+CLI commands remain the underlying runtime surfaces.
 
 The runtime now has two honest paths:
 
@@ -24,7 +25,24 @@ If the `oncall-agent` console script is not available in your current shell, use
 .venv/bin/python -m runtime.cli <command> ...
 ```
 
-## 1. Use The Interactive Operator Shell
+## 1. Launch The Minimal Operator Console
+
+Start the local console server:
+
+```bash
+oncall-agent console
+```
+
+The command prints a local URL such as `http://127.0.0.1:8080`. The console stays panel-first:
+
+- recent sessions on the left
+- incident detail and timeline in the main column
+- a session-scoped assistant pane on the right
+
+The assistant pane is secondary. It explains the selected session from current runtime truth only.
+It does not persist chat history and it does not become workflow authority.
+
+## 2. Use The Interactive Operator Shell
 
 Launch the operator shell:
 
@@ -90,7 +108,7 @@ allowed_base_urls = ["http://127.0.0.1:8001"]
 Those defaults fail closed. `auto-safe` will not execute anything until `enabled = true` and the
 target base URL is explicitly allowlisted.
 
-## 2. Run The Live Deployment-Regression Closed Loop
+## 3. Run The Live Deployment-Regression Closed Loop
 
 Start the local demo target in a separate shell:
 
@@ -136,7 +154,7 @@ oncall-agent verify-outcome <session_id> --json
 
 For a faster product walkthrough that keeps everything in one terminal, see [Demo Guide](demo.md).
 
-## 3. List The Built-In Evals
+## 4. List The Built-In Evals
 
 ```bash
 oncall-agent list-evals
@@ -147,7 +165,7 @@ Current canonical scenario names:
 - `incident-chain-replay-recent-deployment`
 - `incident-chain-replay-insufficient-evidence`
 
-## 4. Run A Supported-Path Eval
+## 5. Run A Supported-Path Eval
 
 ```bash
 oncall-agent run-eval incident-chain-replay-recent-deployment \
@@ -167,7 +185,7 @@ The JSON output includes:
 - `"session_id"` for later inspection
 - `"checkpoint_path"`, `"transcript_path"`, and `"working_memory_path"`
 
-## 5. Run A Conservative-Path Eval
+## 6. Run A Conservative-Path Eval
 
 ```bash
 oncall-agent run-eval incident-chain-replay-insufficient-evidence \
@@ -181,7 +199,7 @@ Expected highlights:
 - `"current_phase": "action_stub_not_actionable"`
 - `"handoff_status": "written"`
 
-## 6. Inspect A Session
+## 7. Inspect A Session
 
 Using the supported-path replay as the example:
 
@@ -199,7 +217,7 @@ Expected highlights:
 - `transcript_event_count`
 - the concrete checkpoint/transcript/working-memory paths
 
-## 7. Inspect The Artifact Chain
+## 8. Inspect The Artifact Chain
 
 ```bash
 oncall-agent inspect-artifacts incident-chain-replay-recent-deployment-session \
@@ -219,7 +237,7 @@ For replay sessions, `action_execution` and `outcome_verification` stay `insuffi
 replay path stops at the approval boundary. For live approved sessions, those stages become
 `verified`.
 
-## 8. Inspect The Audit Trail
+## 9. Inspect The Audit Trail
 
 ```bash
 oncall-agent show-audit incident-chain-replay-recent-deployment-session \
@@ -237,7 +255,7 @@ Expected highlights:
 - explicit verifier names and statuses
 - approval resolution events when the live path is used
 
-## 9. Export The Handoff Artifact
+## 10. Export The Handoff Artifact
 
 ```bash
 oncall-agent export-handoff incident-chain-replay-recent-deployment-session \
@@ -252,7 +270,7 @@ Expected highlights:
 - `status: written`
 - `handoff_path: /tmp/oncall-agent-demo/<run-dir>/handoffs/<incident_id>.json`
 
-## 10. Where Outputs Are Written
+## 11. Where Outputs Are Written
 
 If you pass `--output-root`, `run-eval` creates a unique subdirectory under that root containing:
 
