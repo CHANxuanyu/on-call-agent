@@ -1,25 +1,28 @@
 # Verifier-Driven Incident Response Agent Harness
 
-Python incident-response runtime for a narrow verifier-driven workflow built around append-only
-transcripts, resumable checkpoints, explicit approval boundaries, and durable artifact recovery.
-Today the repository supports one honest, demo-grade live ops path for the
-`deployment-regression` incident family on a local demo target, plus a thin operator shell with
-`manual`, `semi-auto`, and fail-closed `auto-safe` modes. It is not a mature ops product, not a
-coding agent, and not a broad autonomous remediation system.
+This repository is a verifier-driven, durable, approval-gated incident-response runtime.
+Today it supports one honest, demo-grade live ops path for the `deployment-regression` incident
+family on a local demo target, plus a thin operator shell with `manual`, `semi-auto`, and
+fail-closed `auto-safe` modes.
+
+It is not a mature ops product, not a coding agent, and not a broad autonomous remediation
+system. The point of the repository is to show a reliable harness spine for incident handling:
+typed slices, append-only transcripts, resumable checkpoints, explicit approval boundaries,
+external outcome verification, and durable recovery through `SessionArtifactContext`.
 
 ## Start Here
 
 - [Usage Guide](docs/usage.md): practical command reference for the shell and direct CLI surfaces
-- [Demo Guide](docs/demo.md): 5-minute walkthrough for the current product slice
+- [Demo Guide](docs/demo.md): 5-minute walkthrough of the current live deployment-regression path
 - [Architecture Summary](docs/architecture.md): runtime seams, durable-state layers, and safety
   boundaries
 - [Operator Shell Smoke Checklist](docs/operator_shell_smoke_checklist.md): human-guided local
-  rerun for the current shell flows
+  rerun of the current shell flows
 - [Project Summary](docs/project_summary.md): short repository framing
 
-## What This Repository Is
+## What This Project Can Do Today
 
-This repository implements one explicit incident chain:
+The implemented runtime chain is explicit:
 
 `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
 
@@ -27,73 +30,26 @@ For the live `deployment-regression` family, the approved branch continues throu
 
 `bounded rollback execution -> outcome verification`
 
-It is intentionally narrow. The point is to show reliable runtime behavior for incident handling,
-not broad planner behavior.
+What that means in practice:
 
-In this repository, "verifier-driven" means a slice is not considered complete just because a tool
-or model returned output. Each meaningful slice records transcript events, runs its verifier, and
-only then persists the next checkpointed phase. Progression is therefore anchored to verifier
-results, not just generated text.
+- start an incident from a structured payload
+- gather deterministic evidence from a local demo target
+- produce a verifier-backed deployment-regression hypothesis
+- surface one approval-gated rollback candidate
+- execute one bounded rollback after approval
+- verify recovery against external `/deployment`, `/health`, and `/metrics` endpoints
+- export inspectable handoff and audit artifacts from durable session state
 
-The durable-state seams are explicit:
+## What This Project Intentionally Does Not Do
 
-- checkpoints in `sessions/checkpoints/<session_id>.json`
-- append-only transcripts in `sessions/transcripts/<session_id>.jsonl`
-- incident working memory in `sessions/working_memory/<incident_id>.json`
-- derived handoff artifacts in `sessions/handoffs/<incident_id>.json`
-
-The main operator-facing surfaces are the CLI commands:
-
-- `shell`
-- `inspect-session`
-- `inspect-artifacts`
-- `show-audit`
-- `export-handoff`
-- `start-incident`
-- `resolve-approval`
-- `verify-outcome`
-- `run-demo-target`
-- `list-evals`
-- `run-eval`
-
-## What This Runtime Is For
-
-The runtime is designed for incident-handling style workflows where correctness of state and
-artifacts matters more than demo breadth:
-
-- triaging a structured incident payload
-- selecting one deterministic follow-up target
-- reading one deterministic evidence bundle
-- producing one verifier-backed hypothesis
-- producing one verifier-backed recommendation
-- surfacing one approval-gated action candidate stub
-- executing one explicit approval-gated rollback against the local demo target
-- verifying live post-action runtime state through external endpoint probes
-- generating operator-facing handoff artifacts from durable runtime state
-
-## What It Is Not For
-
-This repository does not implement:
-
-- broad remediation or mutation of arbitrary external systems
-- a generic planner or open-ended autonomous loop
-- a coding-agent product surface like Claude Code
+- broad remediation across arbitrary systems
+- generic planner or open-ended autonomous loop behavior
 - multi-agent orchestration
-- approval UI or reviewer workflow integration
-- production deployment infrastructure or third-party ops integrations
+- production deployment integrations or approval UI
+- broad autonomy beyond the existing bounded rollback path
 
-## Why This Is Not A Generic Agent Demo
-
-Most agent demos optimize for broad capability claims or UI. This repository optimizes for harness
-engineering:
-
-- verifier-driven completion instead of `"the model returned"`
-- append-only JSONL transcripts instead of hidden in-memory state
-- checkpoint-driven resumability instead of best-effort retries
-- explicit approval boundaries instead of implicit risky autonomy
-- replayable fixtures and eval coverage instead of one-off screenshots
-
-The point is to prove a reliable runtime spine, not to claim product completeness.
+The repository is intentionally narrow. It should be read as a durable runtime milestone with one
+real operator-facing product slice, not as a finished ops platform.
 
 ## Quickstart
 
@@ -103,383 +59,139 @@ Install the repository in editable mode:
 python -m pip install -e '.[dev]'
 ```
 
-List the built-in replay scenarios:
+If the console script is not available in your shell, use:
 
 ```bash
-oncall-agent list-evals
+.venv/bin/python -m runtime.cli <command> ...
 ```
 
-Run one supported replay scenario and write its artifacts under a dedicated output root:
+Run one replay scenario:
 
 ```bash
 oncall-agent run-eval incident-chain-replay-recent-deployment --output-root /tmp/oncall-agent-demo
 ```
 
-Expected outcome:
+Expected highlights:
 
 - `path_classification: supported`
 - `final_stage: action_stub`
 - `handoff_status: written`
 
-The replay run writes a unique subdirectory under the output root, for example:
-
-- `/tmp/oncall-agent-demo/<generated-run-id>/checkpoints/...`
-- `/tmp/oncall-agent-demo/<generated-run-id>/transcripts/...`
-- `/tmp/oncall-agent-demo/<generated-run-id>/working_memory/...`
-- `/tmp/oncall-agent-demo/<generated-run-id>/handoffs/...`
-
-Inspect the resulting session:
-
-```bash
-oncall-agent inspect-session incident-chain-replay-recent-deployment-session \
-  --checkpoint-root /tmp/oncall-agent-demo/<generated-run-id>/checkpoints \
-  --transcript-root /tmp/oncall-agent-demo/<generated-run-id>/transcripts \
-  --working-memory-root /tmp/oncall-agent-demo/<generated-run-id>/working_memory
-```
-
-Expected outcome:
-
-- `current_phase: action_stub_pending_approval`
-- `approval_status: pending`
-- transcript and checkpoint paths for the replayed session
-
-Run the live closed-loop deployment-regression demo target in a separate shell:
-
-```bash
-oncall-agent run-demo-target --port 8001
-```
-
-Use the interactive operator shell as the primary operator surface:
+Launch the operator shell:
 
 ```bash
 oncall-agent shell
 ```
 
-Example shell flow:
+## Operator Shell
+
+The shell is the main operator-facing surface over the existing runtime. It does not introduce a
+second state layer; it uses the same checkpoints, transcripts, working memory, inspection, and
+handoff seams as the direct CLI.
+
+Core shell commands:
+
+- `/sessions`
+- `/new <payload-path>`
+- `/resume <session-id|index>`
+- `/mode manual|semi-auto|auto-safe`
+- `/status`
+- `/why-not-auto`
+- `/tail`
+- `/approve <reason>`
+- `/deny <reason>`
+- `/verify`
+- `/handoff`
+
+Autonomy modes:
+
+- `manual`: inspection-first; no shell-driven write execution
+- `semi-auto`: drive the read-only chain to the approval boundary, then stop
+- `auto-safe`: only auto-execute the existing bounded deployment-regression rollback when the
+  repo-local policy is enabled, the base URL is allowlisted, the verified rollback candidate
+  exists, the live version checks still match, and no blocking gaps remain; otherwise degrade to
+  `semi-auto` with a durable reason
+
+The default policy in `.oncall/settings.toml` fails closed. `auto-safe` is disabled until it is
+explicitly enabled.
+
+## Live Deployment-Regression Demo
+
+Start the local demo target in one terminal:
+
+```bash
+oncall-agent run-demo-target --port 8001
+```
+
+Use the shell as the main operator flow:
 
 ```text
 /sessions
 /mode semi-auto
 /new docs/examples/deployment_regression_payload.json
+/status
+/why-not-auto
 /approve Rollback approved for the live demo target.
-/tail
+/verify
 /handoff
 /exit
 ```
 
-`manual`, `semi-auto`, and `auto-safe` are first-class shell modes. `auto-safe` is fail-closed:
-the repository-local `.oncall/settings.toml` defaults to `enabled = false`, and auto execution
-only occurs for the existing bounded deployment-regression rollback when the policy is enabled and
-the exact base URL is allowlisted. Otherwise the shell degrades the session to `semi-auto` and
-records the reason durably in checkpoint state.
-
-The shell also exposes a thin session workspace over the existing durable state:
-
-- `/sessions` lists recent sessions from checkpoint and transcript files
-- `/resume <session-id|index>` reactivates a prior session and prints a compact summary
-- `/status` shows identity, phase, mode, approval, evidence, verifier, and handoff state
-- `/why-not-auto` explains the current auto-safe eligibility and any downgrade reason
-- `/tail` shows recent important session activity from transcript events
-
-For a human-guided local rerun of the shell flows, including fresh-session, healthy/no-action, and
-auto-safe checks, use the [Operator Shell Smoke Checklist](docs/operator_shell_smoke_checklist.md)
-with `scripts/test_operator_shell_smoke.sh`.
-
-Start a live incident session from [deployment_regression_payload.json](docs/examples/deployment_regression_payload.json):
+Or use the direct CLI surfaces:
 
 ```bash
 oncall-agent start-incident \
   --family deployment-regression \
   --payload docs/examples/deployment_regression_payload.json \
   --json
-```
 
-Approve the bounded rollback candidate and let the runtime execute the rollback plus outcome probe:
-
-```bash
 oncall-agent resolve-approval <session_id> --decision approve --json
 ```
 
-Expected live-path outcome:
+Expected live-path highlights:
 
-- `current_phase: outcome_verification_succeeded`
-- `approval_status: approved`
-- the action execution and outcome verification stages are verifier-backed and inspectable
+- initial phase reaches `action_stub_pending_approval`
+- approval records a bounded rollback decision
+- final phase becomes `outcome_verification_succeeded`
+- recovery is verified from external runtime state
 
-For local verification without installing the console script, the same commands also work via:
+For a step-by-step walkthrough, use [Demo Guide](docs/demo.md). For a human-guided local shell
+rerun, use [Operator Shell Smoke Checklist](docs/operator_shell_smoke_checklist.md).
 
-```bash
-.venv/bin/python -m runtime.cli <command> ...
-```
+## Why This Runtime Is Technically Credible
 
-If you omit `--output-root` on `run-eval`, the CLI writes replay artifacts under
-`sessions/evals/`.
+- verifier-driven progression instead of treating model output as completion
+- append-only JSONL transcripts instead of hidden in-memory state
+- resumable checkpoints for control state
+- `SessionArtifactContext` as the durable recovery and audit seam
+- explicit approval boundaries for risky actions
+- external outcome verification after the one implemented rollback action
 
-## Runtime Spine
+Current durable state seams:
 
-Current implemented chain:
+- checkpoints in `sessions/checkpoints/<session_id>.json`
+- append-only transcripts in `sessions/transcripts/<session_id>.jsonl`
+- incident working memory in `sessions/working_memory/<incident_id>.json`
+- derived handoff artifacts in `sessions/handoffs/<incident_id>.json`
 
-Replay and pre-approval path:
+## Limitations And Honest Scope
 
-`triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+This repository currently proves one narrow live closed loop:
 
-Live approved path for `deployment-regression`:
+- one incident family: `deployment-regression`
+- one bounded mitigation: rollback to the known-good version
+- one local demo target
+- one thin operator shell over the same runtime
 
-`triage -> follow-up -> live evidence -> hypothesis -> recommendation -> approval-gated action stub -> bounded rollback execution -> outcome verification`
+The replay/eval path remains important because it shows the verifier-backed chain and conservative
+behavior without execution. The live path only continues beyond the approval boundary for the
+existing bounded rollback slice.
 
-Each slice is narrow and explicit.
-
-1. `IncidentTriageStep`
-   Reads a structured incident payload, emits transcript events, verifies the triage output, and
-   writes the first checkpoint.
-2. `IncidentFollowUpStep`
-   Resumes from checkpoint plus transcript state and either safely no-ops or selects exactly one
-   read-only investigation target.
-3. `IncidentEvidenceStep`
-   Reconstructs the selected target from durable artifacts and reads one deterministic evidence
-   bundle.
-4. `IncidentHypothesisStep`
-   Consumes one verified evidence record and produces exactly one structured hypothesis.
-5. `IncidentRecommendationStep`
-   Consumes one verified hypothesis and produces exactly one structured advisory recommendation.
-6. `IncidentActionStubStep`
-   Consumes one verified recommendation and produces exactly one approval-aware action candidate
-   stub or one explicit conservative no-actionable outcome.
-7. `DeploymentRollbackExecutionStep`
-   Consumes one approved rollback candidate and executes exactly one bounded rollback against the
-   local demo target.
-8. `DeploymentOutcomeVerificationStep`
-   Probes live deployment, health, and metrics endpoints after rollback and verifies whether the
-   target recovered.
-
-The replay path still stops at the approval-gated action stub. The live path continues only for the
-single deployment-regression family and only after explicit approval is durably recorded.
-
-## Runtime Infrastructure
-
-### Durable Contracts
-
-- file-based skills under `skills/<skill>/SKILL.md`
-- typed tools, verifier results, transcript events, and checkpoints
-- deterministic local fixtures for replayable evidence
-- one local demo target with live health, deployment, metrics, rollback, and post-action probes
-
-### Execution Truth
-
-- append-only transcript events in `sessions/transcripts/<session_id>.jsonl`
-- resumable checkpoints in `sessions/checkpoints/<session_id>.json`
-- verifier-driven phase transitions at every implemented slice
-
-### Shared Runtime Layers
-
-- `SessionArtifactContext` loads checkpoint plus transcript once and reconstructs the latest
-  verified artifacts
-- synthetic failure invariants normalize malformed, missing, or interrupted artifact paths into
-  structured replayable failures
-- the shared resumable-slice harness centralizes resume, permission, tool, verifier, and
-  checkpoint wiring while keeping domain logic inside each step
-- permission provenance records why a decision was allowed, blocked, or would require approval
-
-### Semantic Memory And Operator Artifacts
-
-- `IncidentWorkingMemory` stores a compact verified snapshot of current incident understanding
-- handoff context assembly builds one read-only operator-facing context object from checkpoint,
-  verified artifacts, and working memory
-- stable handoff artifacts are written to `sessions/handoffs/<incident_id>.json`
-- handoff artifacts can be regenerated deterministically from existing durable state
-
-## Approval Boundary Philosophy
-
-This runtime is deliberately conservative.
-
-- Read-only steps can proceed when policy allows them.
-- Stronger evidence can justify a structured action candidate.
-- A candidate is still not execution.
-- The one implemented non-read-only action is a bounded rollback against the local demo target and
-  only runs after approval is explicitly recorded.
-- Broader non-read-only actions remain outside scope until they have equally explicit approval and
-  verification semantics.
-
-That is why the replay path ends at the action stub while the live path continues only for one
-explicitly bounded rollback slice.
-
-## Replay / Eval Story
-
-The repo includes replay-style coverage over fixed fixtures, not a generic benchmark harness.
-
-Implemented branches:
-
-- supported branch:
-  `recent_deployment -> deployment_regression -> validate_recent_deployment -> rollback_recent_deployment_candidate`
-- conservative branch:
-  `runbook -> insufficient_evidence -> investigate_more -> no_actionable_stub_yet`
-
-These scenarios prove that the harness can carry verified state forward, remain conservative when
-evidence is weak, and keep the approval boundary explicit.
-
-Built-in operator-facing replay commands:
-
-- `oncall-agent list-evals`
-- `oncall-agent run-eval incident-chain-replay-recent-deployment`
-- `oncall-agent run-eval incident-chain-replay-insufficient-evidence`
-
-For backward compatibility, `run-eval` also accepts the underscore-style built-in aliases
-`incident_chain_recent_deployment` and `incident_chain_insufficient_evidence`, but `list-evals`
-shows the canonical hyphenated names.
-
-## Operator CLI Surface
-
-The CLI is intentionally split into two surfaces.
-
-Inspection and export surface:
-
-- `oncall-agent inspect-session <session_id>`
-- `oncall-agent inspect-artifacts <session_id>`
-- `oncall-agent show-audit <session_id>`
-- `oncall-agent export-handoff <session_id>`
-
-Live deployment-regression surface:
-
-- `oncall-agent run-demo-target`
-- `oncall-agent start-incident --family deployment-regression --payload <file>`
-- `oncall-agent resolve-approval <session_id> --decision approve|deny`
-- `oncall-agent verify-outcome <session_id>`
-
-Replay and demo surface:
-
-- `oncall-agent list-evals`
-- `oncall-agent run-eval <eval_name>`
-
-The CLI still does not create arbitrary generic agent sessions. It now exposes one explicit live
-operator workflow for the deployment-regression family, plus one interactive shell over that same
-narrow runtime.
-
-## Handoff Artifact Capability
-
-The current milestone includes an operator-facing derived artifact flow:
-
-`SessionArtifactContext -> IncidentHandoffContextAssembler -> IncidentHandoffArtifactWriter`
-
-You can also regenerate the latest handoff artifact from a session id with the internal regenerator:
-
-```python
-from context.handoff_regeneration import IncidentHandoffArtifactRegenerator
-
-result = IncidentHandoffArtifactRegenerator().regenerate("session-id")
-```
-
-That writes or updates:
-
-- `sessions/handoffs/<incident_id>.json`
-
-The handoff artifact is derived output only. It is not part of the control plane.
-
-## Intentionally Out Of Scope
-
-- broad unbounded execution or remediation
-- human approval UI
-- project-memory promotion
-- background extraction or compaction systems
-- generic planner / workflow engine
-- multi-agent orchestration
-- API server or end-user product surface
-
-## Validation Commands
-
-Install development dependencies:
-
-```bash
-python -m pip install -e '.[dev]'
-```
-
-Run the full validation stack:
-
-```bash
-ruff check src tests docs
-mypy src tests
-pytest
-```
-
-Run replay coverage only:
-
-```bash
-pytest tests/integration/test_incident_chain_replay_eval.py
-```
-
-Run the two fixed demo scenarios:
-
-```bash
-pytest tests/integration/test_incident_chain_replay_eval.py::test_incident_chain_replay_eval_runs_supported_hypothesis_chain
-pytest tests/integration/test_incident_chain_replay_eval.py::test_incident_chain_replay_eval_runs_insufficient_evidence_chain
-```
-
-## Repository Structure
-
-```text
-src/agent/                     Narrow resumable step runners
-src/context/                   Session artifact context, handoff assembly, handoff regeneration
-src/runtime/                   Shared harness and synthetic failure normalization
-src/tools/implementations/     Deterministic read-only tool actions
-src/verifiers/implementations/ Structured verifier logic
-src/memory/                    Checkpoints and incident working-memory persistence
-src/transcripts/               Typed transcript models and JSONL storage
-src/evals/                     Replay/eval runner
-skills/                        Durable skill assets
-evals/fixtures/                Fixed evidence and scenario fixtures
-tests/unit/                    Contract and component tests
-tests/integration/             End-to-end slice and replay coverage
-docs/                          Architecture, demo, interview, and resume materials
-```
-
-## Repository Map
-
-Key repository entrypoints for reviewers:
-
-- runtime core and harness boundary:
-  `src/runtime/harness.py`, `src/runtime/execution.py`
-- explicit incident chain:
-  `src/agent/incident_triage.py`, `src/agent/incident_follow_up.py`,
-  `src/agent/incident_evidence.py`, `src/agent/incident_hypothesis.py`,
-  `src/agent/incident_recommendation.py`, `src/agent/incident_action_stub.py`
-- durable artifact reconstruction:
-  `src/context/session_artifacts.py`
-- handoff assembly and regeneration:
-  `src/context/handoff.py`, `src/context/handoff_regeneration.py`
-- operator CLI surface:
-  `src/runtime/cli.py`, `src/runtime/inspect.py`, `src/runtime/eval_surface.py`
-- replay/eval entrypoint:
-  `src/evals/incident_chain_replay.py`
-
-## Milestone Status
-
-This repository should be read as a completed runtime milestone, not a finished product.
-
-What is complete for this milestone:
-
-- verifier-gated slice chain from triage through approval-aware action candidacy
-- one live deployment-regression closed loop with approval-gated bounded rollback execution and
-  external outcome verification on the demo target
-- checkpoint plus transcript resumability
-- replayable artifact reconstruction through `SessionArtifactContext`
-- synthetic failure normalization for malformed or partial runtime paths
-- permission provenance and explicit approval-state persistence
-- first incident-working-memory slice
-- operator shell with `manual`, `semi-auto`, and fail-closed `auto-safe` modes
-- operator-facing handoff assembly, artifact writing, and deterministic regeneration
-
-What is intentionally deferred:
-
-- broad execution semantics beyond the one bounded rollback demo path
-- broader incident families and action types
-- broader memory layering beyond the first incident-working-memory slice
-- external approvals, integrations, and product surface
-
-## Additional Docs
+## Deeper Docs
 
 - [Usage Guide](docs/usage.md)
-- [Architecture Summary](docs/architecture.md)
 - [Demo Guide](docs/demo.md)
-- [Operator Shell Smoke Checklist](docs/operator_shell_smoke_checklist.md)
+- [Architecture Summary](docs/architecture.md)
+- [Project Summary](docs/project_summary.md)
 - [Resume Framing](docs/resume.md)
 - [Interview Guide](docs/interview.md)
-- [Project Summary](docs/project_summary.md)
