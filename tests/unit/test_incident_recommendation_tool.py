@@ -7,6 +7,7 @@ from tools.implementations.incident_hypothesis import (
     IncidentHypothesisOutput,
 )
 from tools.implementations.incident_recommendation import (
+    ALREADY_HEALTHY_ON_KNOWN_GOOD_REF,
     IncidentRecommendationBuilderTool,
     IncidentRecommendationOutput,
     RecommendationApprovalLevel,
@@ -52,6 +53,30 @@ def _hypothesis_output(hypothesis_type: HypothesisType) -> IncidentHypothesisOut
     )
 
 
+def _recovered_hypothesis_output() -> IncidentHypothesisOutput:
+    return IncidentHypothesisOutput(
+        incident_id="incident-802",
+        service="payments-api",
+        evidence_snapshot_id="live-deployment-2.0.9",
+        evidence_investigation_target=InvestigationTarget.RECENT_DEPLOYMENT,
+        hypothesis_type=HypothesisType.INSUFFICIENT_EVIDENCE,
+        evidence_supported=False,
+        confidence=HypothesisConfidence.LOW,
+        rationale_summary=(
+            "Live runtime evidence shows payments-api is already healthy on version 2.0.9, "
+            "so the bad deployment is not currently active and a rollback candidate is not "
+            "justified."
+        ),
+        supporting_evidence_fields=["snapshot_id", "evidence_summary", "observations"],
+        unresolved_gaps=[],
+        recommended_next_action=(
+            "Inspect the recovered runtime artifacts and continue monitoring before "
+            "proposing any mitigation."
+        ),
+        more_investigation_required=True,
+    )
+
+
 @pytest.mark.asyncio
 async def test_incident_recommendation_tool_builds_supported_recommendation() -> None:
     tool = IncidentRecommendationBuilderTool()
@@ -92,3 +117,23 @@ async def test_incident_recommendation_tool_builds_conservative_recommendation()
     assert result.status is ToolResultStatus.SUCCEEDED
     assert recommendation_output.recommendation_type is RecommendationType.INVESTIGATE_MORE
     assert recommendation_output.required_approval_level is RecommendationApprovalLevel.NONE
+
+
+@pytest.mark.asyncio
+async def test_incident_recommendation_tool_builds_resolved_no_action_recommendation() -> None:
+    tool = IncidentRecommendationBuilderTool()
+    hypothesis_output = _recovered_hypothesis_output()
+
+    result = await tool.execute(
+        ToolCall(
+            name=tool.definition.name,
+            arguments={"hypothesis_output": hypothesis_output.model_dump(mode="json")},
+        )
+    )
+    recommendation_output = IncidentRecommendationOutput.model_validate(result.output)
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert recommendation_output.recommendation_type is RecommendationType.INVESTIGATE_MORE
+    assert recommendation_output.required_approval_level is RecommendationApprovalLevel.NONE
+    assert ALREADY_HEALTHY_ON_KNOWN_GOOD_REF in recommendation_output.supporting_artifact_refs
+    assert "Prepare no rollback action" in recommendation_output.action_summary

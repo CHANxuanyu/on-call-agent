@@ -33,7 +33,10 @@ def _sample_handoff_context() -> IncidentHandoffContext:
         current_phase="recommendation_supported",
         progress_summary="Recommendation step completed successfully.",
         leading_hypothesis_summary="Evidence supports a deployment regression.",
-        recommendation_summary="Validate the recent deployment path for payments-api.",
+        recommendation_summary=(
+            "Prepare a rollback of the recent deployment for payments-api if approval "
+            "and rollback preconditions are satisfied."
+        ),
         unresolved_gaps=["Need rollback safety confirmation."],
         important_evidence_references=["evidence:deployment-record-2026-04-01"],
         approval=ApprovalHandoffSummary(status=ApprovalStatus.NONE),

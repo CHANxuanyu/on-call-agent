@@ -50,10 +50,13 @@ oncall-agent shell
 Example shell transcript:
 
 ```text
+/sessions
 /mode semi-auto
 /new docs/examples/deployment_regression_payload.json
 /status
+/why-not-auto
 /approve Rollback approved for the live demo target.
+/tail
 /handoff
 /exit
 ```
@@ -62,6 +65,11 @@ Example shell transcript:
 the bounded rollback when `.oncall/settings.toml` enables the policy and the exact live target
 base URL is allowlisted. If those checks do not pass, the session degrades to `semi-auto` and the
 downgrade reason is written durably into checkpoint state.
+
+If you start multiple shell sessions while reviewing the repo, use `/sessions` to discover the
+recent durable sessions and `/resume <session-id|index>` to jump back into one without leaving the
+shell. `/why-not-auto` and `/tail` give the fastest operator-facing explanation of why auto-safe
+did or did not run and what the session did most recently.
 
 Expected output highlights:
 

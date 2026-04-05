@@ -13,7 +13,7 @@
   "expected_hypothesis_supported": true,
   "expected_recommendation_type": "validate_recent_deployment",
   "expected_recommendation_requires_approval": true,
-  "expected_action_candidate_type": "deployment_validation_candidate",
+  "expected_action_candidate_type": "rollback_recent_deployment_candidate",
   "expected_action_candidate_created": true,
   "expected_action_stub_requires_approval": true
 }

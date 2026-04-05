@@ -26,6 +26,7 @@ class TranscriptEventType(StrEnum):
     VERIFIER_RESULT = "verifier_result"
     CHECKPOINT_WRITTEN = "checkpoint_written"
     RESUME_STARTED = "resume_started"
+    APPROVAL_RESOLVED = "approval_resolved"
 
 
 class BaseTranscriptEvent(BaseModel):
@@ -99,6 +100,15 @@ class ResumeStartedEvent(BaseTranscriptEvent):
     reason: str
 
 
+class ApprovalResolvedEvent(BaseTranscriptEvent):
+    """Marker that a pending approval gate was explicitly resolved."""
+
+    event_type: Literal["approval_resolved"] = "approval_resolved"
+    decision: Literal["approved", "denied"]
+    requested_action: str
+    reason: str | None = None
+
+
 TranscriptEvent: TypeAlias = Annotated[
     ModelStepEvent
     | ToolRequestEvent
@@ -106,7 +116,8 @@ TranscriptEvent: TypeAlias = Annotated[
     | PermissionDecisionEvent
     | VerifierResultEvent
     | CheckpointWrittenEvent
-    | ResumeStartedEvent,
+    | ResumeStartedEvent
+    | ApprovalResolvedEvent,
     Field(discriminator="event_type"),
 ]
 

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>On-Call Assistant / Phase 2</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <p class="eyebrow">Phase 2</p>
+            <h1>Semantic SOP Search</h1>
+            <p class="subhead">Dense chunk retrieval over section-level SOP content. Queries do not need to appear verbatim in the underlying document text.</p>
+        </section>
+
+        <section class="panel">
+            <form id="search-form" class="search-form" action="/v2" method="get">
+                <label class="search-label" for="search-query">Search SOPs semantically</label>
+                <div class="search-row">
+                    <input
+                        id="search-query"
+                        name="q"
+                        type="search"
+                        value="{{ query }}"
+                        placeholder="Try 服务器挂了, 黑客攻击, 机器学习模型出问题"
+                        autocomplete="off"
+                    >
+                    <button type="submit">Search</button>
+                </div>
+            </form>
+
+            <div class="results-meta">
+                <span id="results-count">{{ results|length }}</span>
+                <span>result{{ '' if results|length == 1 else 's' }}</span>
+            </div>
+
+            <ul id="results-list" class="results-list">
+                {% for result in results %}
+                <li class="result-card">
+                    <div class="result-head">
+                        <h2>{{ result.title }}</h2>
+                        <span class="score">score {{ '%.3f' % result.score }}</span>
+                    </div>
+                    <p class="result-id">{{ result.id }}</p>
+                    <p class="snippet">{{ result.snippet }}</p>
+                </li>
+                {% endfor %}
+            </ul>
+
+            <p id="empty-state" class="empty-state {% if results %}hidden{% endif %}">
+                No semantic results yet. Submit a natural-language incident query to search the SOP corpus.
+            </p>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', path='v2.js') }}" defer></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+groups:
+  - name: oncall-agent
+    rules:
+      - alert: OnCallAgentDown
+        expr: up{job="oncall-agent"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: oncall-agent
+        annotations:
+          summary: on-call-agent is down
+          description: Prometheus has not been able to scrape the application for at least 2 minutes.
+
+      - alert: OnCallAgentHigh5xxErrorRate
+        expr: |
+          (
+            sum(rate(oncall_agent_http_request_errors_total{status_code=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(oncall_agent_http_requests_total[5m])), 1)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: oncall-agent
+        annotations:
+          summary: on-call-agent 5xx error rate is elevated
+          description: The rolling 5-minute 5xx error rate is above 5%.
+
+      - alert: OnCallAgentHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(oncall_agent_http_request_duration_seconds_bucket{route!="/metrics"}[5m])) by (le, route)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: oncall-agent
+        annotations:
+          summary: on-call-agent p95 latency is elevated
+          description: At least one route has p95 latency above 1 second for 10 minutes.
+
+      - alert: OnCallAgentDependencyLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(oncall_agent_dependency_request_duration_seconds_bucket[5m])) by (le, dependency, operation)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: oncall-agent
+        annotations:
+          summary: dependency latency is elevated
+          description: A dependency used by on-call-agent has p95 latency above 2 seconds.

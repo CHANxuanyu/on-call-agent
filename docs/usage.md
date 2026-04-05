@@ -33,13 +33,28 @@ oncall-agent shell
 Recommended shell flow for the live demo:
 
 ```text
+/sessions
 /mode semi-auto
 /new docs/examples/deployment_regression_payload.json
 /status
+/why-not-auto
 /approve Rollback approved for the live demo target.
+/tail
 /handoff
 /exit
 ```
+
+Session workspace commands:
+
+- `/sessions`: list recent sessions from durable checkpoints and transcripts in compact form
+- `/resume <session-id|index>`: reactivate a session directly or by the numeric index shown by
+  `/sessions`
+- `/status`: show the current compact operator summary, including requested/effective mode and any
+  downgrade reason
+- `/why-not-auto`: explain the current auto-safe eligibility, allowlist status, and any blocking
+  gate
+- `/tail`: show recent important activity such as checkpoint writes, verifier results, approval
+  events, and rollback/outcome tool results
 
 Mode behavior:
 

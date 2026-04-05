@@ -48,6 +48,32 @@ def _evidence_output(target: InvestigationTarget, snapshot_id: str) -> EvidenceR
     )
 
 
+def _recovered_live_evidence_output() -> EvidenceReadOutput:
+    return EvidenceReadOutput(
+        incident_id="incident-602",
+        service="payments-api",
+        investigation_target=InvestigationTarget.RECENT_DEPLOYMENT,
+        snapshot_id="live-deployment-2.0.9",
+        evidence_source="http://127.0.0.1:8001/deployment,http://127.0.0.1:8001/health",
+        evidence_summary=(
+            "Live runtime evidence shows deployment 2.0.9 as the current version for "
+            "payments-api; service is healthy."
+        ),
+        observations=[
+            "Deployment endpoint reports current_version 2.0.9 and previous_version 2.0.9.",
+            (
+                "Deployment endpoint reports the rollout as recent and before alert "
+                "triage: bad_release_active=False."
+            ),
+            "Health endpoint reports status=healthy, healthy=True, error_rate=0.01.",
+            "Metrics endpoint reports error_rate=0.01, timeout_rate=0.00, latency_p95_ms=140.",
+        ],
+        recommended_next_read_only_action=(
+            "Inspect rollback preconditions for payments-api."
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_incident_hypothesis_tool_supports_deployment_regression() -> None:
     tool = IncidentHypothesisBuilderTool()
@@ -87,3 +113,22 @@ async def test_incident_hypothesis_tool_returns_insufficient_evidence_for_runboo
     assert result.status is ToolResultStatus.SUCCEEDED
     assert result.output["hypothesis_type"] == HypothesisType.INSUFFICIENT_EVIDENCE
     assert result.output["evidence_supported"] is False
+
+
+@pytest.mark.asyncio
+async def test_incident_hypothesis_tool_stops_on_recovered_live_service() -> None:
+    tool = IncidentHypothesisBuilderTool()
+    evidence_output = _recovered_live_evidence_output()
+
+    result = await tool.execute(
+        ToolCall(
+            name=tool.definition.name,
+            arguments={"evidence_output": evidence_output.model_dump(mode="json")},
+        )
+    )
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert result.output["hypothesis_type"] == HypothesisType.INSUFFICIENT_EVIDENCE
+    assert result.output["evidence_supported"] is False
+    assert result.output["unresolved_gaps"] == []
+    assert "already healthy on version 2.0.9" in result.output["rationale_summary"]

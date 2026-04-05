@@ -219,7 +219,9 @@ class IncidentActionStubOutcomeVerifier:
             and payload.recommendation_output.required_approval_level
             is not RecommendationApprovalLevel.NONE
         ):
-            expected_candidate_type = ActionCandidateType.DEPLOYMENT_VALIDATION_CANDIDATE
+            expected_candidate_type = (
+                ActionCandidateType.ROLLBACK_RECENT_DEPLOYMENT_CANDIDATE
+            )
             expected_created = True
             expected_approval_required = True
             expected_blocked_pending_approval = True

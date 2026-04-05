@@ -12,6 +12,7 @@ from tools.implementations.incident_hypothesis import (
     HypothesisConfidence,
     HypothesisType,
     IncidentHypothesisOutput,
+    evidence_shows_known_good_recovery,
     evidence_supports_deployment_regression,
 )
 from verifiers.base import (
@@ -301,7 +302,11 @@ class IncidentHypothesisOutcomeVerifier:
                     message="this narrow slice must leave more_investigation_required as true",
                 )
             )
-        if not expected_supported and not payload.hypothesis_output.unresolved_gaps:
+        if (
+            not expected_supported
+            and not evidence_shows_known_good_recovery(payload.evidence_output)
+            and not payload.hypothesis_output.unresolved_gaps
+        ):
             diagnostics.append(
                 VerifierDiagnostic(
                     code="missing_unresolved_gaps",

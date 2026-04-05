@@ -148,9 +148,11 @@ oncall-agent shell
 Example shell flow:
 
 ```text
+/sessions
 /mode semi-auto
 /new docs/examples/deployment_regression_payload.json
 /approve Rollback approved for the live demo target.
+/tail
 /handoff
 /exit
 ```
@@ -160,6 +162,14 @@ the repository-local `.oncall/settings.toml` defaults to `enabled = false`, and 
 only occurs for the existing bounded deployment-regression rollback when the policy is enabled and
 the exact base URL is allowlisted. Otherwise the shell degrades the session to `semi-auto` and
 records the reason durably in checkpoint state.
+
+The shell also exposes a thin session workspace over the existing durable state:
+
+- `/sessions` lists recent sessions from checkpoint and transcript files
+- `/resume <session-id|index>` reactivates a prior session and prints a compact summary
+- `/status` shows identity, phase, mode, approval, evidence, verifier, and handoff state
+- `/why-not-auto` explains the current auto-safe eligibility and any downgrade reason
+- `/tail` shows recent important session activity from transcript events
 
 Start a live incident session from [deployment_regression_payload.json](docs/examples/deployment_regression_payload.json):
 

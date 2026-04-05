@@ -34,7 +34,7 @@ async def test_incident_chain_replay_eval_runs_supported_hypothesis_chain() -> N
     assert "follow_up_target=recent_deployment" in result.notes
     assert "hypothesis_type=deployment_regression" in result.notes
     assert "recommendation_type=validate_recent_deployment" in result.notes
-    assert "action_candidate_type=deployment_validation_candidate" in result.notes
+    assert "action_candidate_type=rollback_recent_deployment_candidate" in result.notes
 
 
 @pytest.mark.asyncio

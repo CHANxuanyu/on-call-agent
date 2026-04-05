@@ -5,12 +5,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from runtime.demo_target import (
+    DemoServiceDeploymentResponse,
+    DemoServiceHealthResponse,
+    DemoServiceMetricsResponse,
+)
 from tools.implementations.follow_up_investigation import (
     FollowUpInvestigationOutput,
     InvestigationTarget,
 )
+from tools.implementations.incident_triage import IncidentTriageInput
 from tools.models import (
     ToolCall,
     ToolDefinition,
@@ -38,6 +45,7 @@ class EvidenceReadInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     investigation_output: FollowUpInvestigationOutput
+    triage_input: IncidentTriageInput | None = None
 
 
 class EvidenceReadOutput(BaseModel):
@@ -61,7 +69,7 @@ _SNAPSHOT_CATALOG_ADAPTER: TypeAdapter[
 
 
 class EvidenceBundleReaderTool:
-    """Reads one deterministic local evidence snapshot for a selected target."""
+    """Reads either a live deployment snapshot or a local fixture for a selected target."""
 
     def __init__(
         self,
@@ -74,7 +82,7 @@ class EvidenceBundleReaderTool:
         return ToolDefinition(
             name="evidence_bundle_reader",
             description=(
-                "Read one deterministic local evidence snapshot for a previously selected "
+                "Read one live or fixture-backed evidence bundle for a previously selected "
                 "investigation target."
             ),
             risk_level=ToolRiskLevel.READ_ONLY,
@@ -92,7 +100,6 @@ class EvidenceBundleReaderTool:
 
         try:
             payload = EvidenceReadInput.model_validate(call.arguments)
-            snapshot_catalog = self._load_snapshot_catalog()
         except ValidationError as exc:
             return ToolResult(
                 status=ToolResultStatus.FAILED,
@@ -101,6 +108,11 @@ class EvidenceBundleReaderTool:
                     message=str(exc),
                 ),
             )
+        try:
+            if self._should_read_live_evidence(payload):
+                evidence_output = await self._read_live_deployment_evidence(payload)
+            else:
+                evidence_output = self._read_fixture_evidence(payload)
         except FileNotFoundError as exc:
             return ToolResult(
                 status=ToolResultStatus.FAILED,
@@ -109,20 +121,37 @@ class EvidenceBundleReaderTool:
                     message=str(exc),
                 ),
             )
-
-        snapshot = snapshot_catalog.get(payload.investigation_output.investigation_target)
-        if snapshot is None:
+        except (httpx.HTTPError, ValueError, ValidationError) as exc:
             return ToolResult(
                 status=ToolResultStatus.FAILED,
                 failure=ToolFailure(
-                    code="unknown_target_fixture",
-                    message=(
-                        "no evidence snapshot fixture exists for target "
-                        f"'{payload.investigation_output.investigation_target}'"
-                    ),
+                    code="live_evidence_unavailable",
+                    message=str(exc),
                 ),
             )
-        evidence_output = EvidenceReadOutput(
+        return ToolResult(
+            status=ToolResultStatus.SUCCEEDED,
+            output=evidence_output.model_dump(mode="json"),
+        )
+
+    def _should_read_live_evidence(self, payload: EvidenceReadInput) -> bool:
+        return (
+            payload.triage_input is not None
+            and payload.triage_input.service_base_url is not None
+            and payload.investigation_output.investigation_target
+            is InvestigationTarget.RECENT_DEPLOYMENT
+        )
+
+    def _read_fixture_evidence(self, payload: EvidenceReadInput) -> EvidenceReadOutput:
+        snapshot_catalog = self._load_snapshot_catalog()
+        snapshot = snapshot_catalog.get(payload.investigation_output.investigation_target)
+        if snapshot is None:
+            msg = (
+                "no evidence snapshot fixture exists for target "
+                f"'{payload.investigation_output.investigation_target}'"
+            )
+            raise ValueError(msg)
+        return EvidenceReadOutput(
             incident_id=payload.investigation_output.incident_id,
             service=payload.investigation_output.service,
             investigation_target=payload.investigation_output.investigation_target,
@@ -134,9 +163,85 @@ class EvidenceBundleReaderTool:
             observations=snapshot.observations,
             recommended_next_read_only_action=snapshot.recommended_next_read_only_action,
         )
-        return ToolResult(
-            status=ToolResultStatus.SUCCEEDED,
-            output=evidence_output.model_dump(mode="json"),
+
+    async def _read_live_deployment_evidence(
+        self,
+        payload: EvidenceReadInput,
+    ) -> EvidenceReadOutput:
+        triage_input = payload.triage_input
+        if triage_input is None or triage_input.service_base_url is None:
+            msg = "live deployment evidence requires triage_input.service_base_url"
+            raise ValueError(msg)
+
+        base_url = triage_input.service_base_url.rstrip("/")
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            deployment_response = await client.get(f"{base_url}/deployment")
+            deployment_response.raise_for_status()
+            metrics_response = await client.get(f"{base_url}/metrics")
+            metrics_response.raise_for_status()
+            health_response = await client.get(f"{base_url}/health")
+
+        if health_response.status_code not in {
+            httpx.codes.OK,
+            httpx.codes.SERVICE_UNAVAILABLE,
+        }:
+            msg = (
+                f"health endpoint returned unexpected status {health_response.status_code} "
+                f"for {base_url}"
+            )
+            raise ValueError(msg)
+
+        deployment = DemoServiceDeploymentResponse.model_validate(deployment_response.json())
+        metrics = DemoServiceMetricsResponse.model_validate(metrics_response.json())
+        health = DemoServiceHealthResponse.model_validate(health_response.json())
+
+        health_summary = (
+            "service is healthy"
+            if health.healthy
+            else (
+                f"service is degraded with {health.degraded_reason or 'unknown timeout symptoms'}"
+            )
+        )
+        observations = [
+            (
+                "Deployment endpoint reports current_version "
+                f"{deployment.current_version} and previous_version {deployment.previous_version}."
+            ),
+            (
+                f"Deployment endpoint reports the rollout as recent and before alert triage: "
+                f"bad_release_active={deployment.bad_release_active}."
+            ),
+            (
+                f"Health endpoint reports status={health.status}, healthy={health.healthy}, "
+                f"error_rate={health.error_rate:.2f}."
+            ),
+            (
+                f"Metrics endpoint reports error_rate={metrics.error_rate:.2f}, "
+                f"timeout_rate={metrics.timeout_rate:.2f}, latency_p95_ms={metrics.latency_p95_ms}."
+            ),
+        ]
+        if not health.healthy:
+            observations.append(
+                "The current deployment correlates with timeout symptoms observed by the runtime."
+            )
+
+        return EvidenceReadOutput(
+            incident_id=payload.investigation_output.incident_id,
+            service=payload.investigation_output.service,
+            investigation_target=payload.investigation_output.investigation_target,
+            snapshot_id=f"live-deployment-{deployment.current_version}",
+            evidence_source=(
+                f"{base_url}/deployment,{base_url}/health,{base_url}/metrics"
+            ),
+            evidence_summary=(
+                f"Live runtime evidence shows deployment {deployment.current_version} as the "
+                f"current version for {deployment.service}; {health_summary}. "
+                "The deployment endpoint indicates the rollout happened before alert triage."
+            ),
+            observations=observations,
+            recommended_next_read_only_action=(
+                f"Inspect rollback preconditions for {payload.investigation_output.service}."
+            ),
         )
 
     def _load_snapshot_catalog(self) -> dict[InvestigationTarget, EvidenceSnapshotSpec]:

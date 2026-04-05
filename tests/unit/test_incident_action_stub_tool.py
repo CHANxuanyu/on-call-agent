@@ -96,3 +96,53 @@ async def test_incident_action_stub_tool_builds_no_actionable_stub() -> None:
     assert result.status is ToolResultStatus.SUCCEEDED
     assert action_stub_output.action_candidate_type is ActionCandidateType.NO_ACTIONABLE_STUB_YET
     assert action_stub_output.approval_gate.approval_required is False
+
+
+@pytest.mark.asyncio
+async def test_incident_action_stub_tool_builds_resolved_no_action_stub() -> None:
+    recommendation_tool = IncidentRecommendationBuilderTool()
+    hypothesis_output = IncidentHypothesisOutput(
+        incident_id="incident-1002",
+        service="payments-api",
+        evidence_snapshot_id="live-deployment-2.0.9",
+        evidence_investigation_target=InvestigationTarget.RECENT_DEPLOYMENT,
+        hypothesis_type=HypothesisType.INSUFFICIENT_EVIDENCE,
+        evidence_supported=False,
+        confidence=HypothesisConfidence.LOW,
+        rationale_summary=(
+            "Live runtime evidence shows payments-api is already healthy on version 2.0.9, "
+            "so the bad deployment is not currently active and a rollback candidate is not "
+            "justified."
+        ),
+        supporting_evidence_fields=["snapshot_id", "evidence_summary", "observations"],
+        unresolved_gaps=[],
+        recommended_next_action=(
+            "Inspect the recovered runtime artifacts and continue monitoring before "
+            "proposing any mitigation."
+        ),
+        more_investigation_required=True,
+    )
+    recommendation_result = await recommendation_tool.execute(
+        ToolCall(
+            name=recommendation_tool.definition.name,
+            arguments={"hypothesis_output": hypothesis_output.model_dump(mode="json")},
+        )
+    )
+
+    tool = IncidentActionStubBuilderTool()
+    result = await tool.execute(
+        ToolCall(
+            name=tool.definition.name,
+            arguments={"recommendation_output": recommendation_result.output},
+        )
+    )
+    action_stub_output = IncidentActionStubOutput.model_validate(result.output)
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert action_stub_output.action_candidate_type is ActionCandidateType.NO_ACTIONABLE_STUB_YET
+    assert action_stub_output.action_candidate_created is False
+    assert action_stub_output.approval_gate.approval_required is False
+    assert "no rollback candidate is warranted" in action_stub_output.action_summary
+    assert "already shows the service healthy" in (
+        action_stub_output.approval_gate.conservative_reason or ""
+    )

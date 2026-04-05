@@ -74,8 +74,9 @@ async def test_incident_recommendation_verifier_passes_supported_recommendation(
         risk_level=RecommendationRiskLevel.MEDIUM,
         required_approval_level=RecommendationApprovalLevel.ONCALL_LEAD,
         preconditions=[
-            "Confirm the deployment diff matches the affected request path.",
-            "Keep all next actions advisory until on-call lead approval is recorded.",
+            "Confirm the currently deployed version still matches the suspected bad release.",
+            "Confirm the previous version is a known-good rollback target.",
+            "Keep all non-read-only actions blocked until on-call lead approval is recorded.",
         ],
         supporting_artifact_refs=[
             "hypothesis:deployment_regression",

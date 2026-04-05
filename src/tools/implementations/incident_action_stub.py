@@ -7,6 +7,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from tools.implementations.incident_recommendation import (
+    ALREADY_HEALTHY_ON_KNOWN_GOOD_REF,
     IncidentRecommendationOutput,
     RecommendationApprovalLevel,
     RecommendationRiskLevel,
@@ -185,6 +186,54 @@ class IncidentActionStubBuilderTool:
         self,
         recommendation_output: IncidentRecommendationOutput,
     ) -> IncidentActionStubOutput:
+        if self._is_resolved_no_action_recommendation(recommendation_output):
+            return IncidentActionStubOutput(
+                incident_id=recommendation_output.incident_id,
+                service=recommendation_output.service,
+                consumed_recommendation_type=recommendation_output.recommendation_type,
+                action_candidate_type=ActionCandidateType.NO_ACTIONABLE_STUB_YET,
+                action_candidate_created=False,
+                action_summary=(
+                    f"Continue monitoring {recommendation_output.service}; no rollback "
+                    "candidate is warranted because live evidence already shows the "
+                    "service healthy on the known-good version."
+                ),
+                justification=(
+                    f"{recommendation_output.justification} The runtime should stay in a "
+                    "non-actionable state until fresh evidence shows the bad release is "
+                    "active again."
+                ),
+                risk_level=RecommendationRiskLevel.LOW,
+                supporting_artifact_refs=recommendation_output.supporting_artifact_refs,
+                expected_outcome=(
+                    "No approval-gated rollback candidate is created while the service "
+                    "remains healthy."
+                ),
+                safety_notes=(
+                    recommendation_output.rollback_or_safety_notes
+                    or "Do not execute rollback while live evidence shows recovery."
+                ),
+                approval_gate=ApprovalGateOutcome(
+                    approval_required=False,
+                    approval_reason=(
+                        "The service already appears recovered, so no rollback candidate "
+                        "should be proposed."
+                    ),
+                    proposed_action_type=ActionCandidateType.NO_ACTIONABLE_STUB_YET,
+                    allowed_without_approval=False,
+                    approval_level=RecommendationApprovalLevel.NONE,
+                    conservative_reason=(
+                        "Live evidence already shows the service healthy on the "
+                        "known-good version, so the session remains non-actionable."
+                    ),
+                    future_preconditions=[
+                        *recommendation_output.preconditions,
+                        "Fresh verifier-backed evidence is required before proposing rollback.",
+                    ],
+                ),
+                future_non_read_only_action_blocked_pending_approval=False,
+                more_investigation_required=True,
+            )
         if (
             recommendation_output.recommendation_type
             is RecommendationType.VALIDATE_RECENT_DEPLOYMENT
@@ -282,4 +331,17 @@ class IncidentActionStubBuilderTool:
             ),
             future_non_read_only_action_blocked_pending_approval=False,
             more_investigation_required=True,
+        )
+
+    def _is_resolved_no_action_recommendation(
+        self,
+        recommendation_output: IncidentRecommendationOutput,
+    ) -> bool:
+        return (
+            recommendation_output.recommendation_type
+            is RecommendationType.INVESTIGATE_MORE
+            and recommendation_output.required_approval_level
+            is RecommendationApprovalLevel.NONE
+            and ALREADY_HEALTHY_ON_KNOWN_GOOD_REF
+            in recommendation_output.supporting_artifact_refs
         )

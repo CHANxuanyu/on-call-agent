@@ -1,0 +1,26 @@
+{
+  "approval_state": {
+    "future_preconditions": [
+      "Confirm the deployment diff matches the affected request path.",
+      "Keep all next actions advisory until on-call lead approval is recorded.",
+      "Human approval must be recorded before any non-read-only action."
+    ],
+    "reason": "The proposed candidate could lead to non-read-only mitigation work and must remain blocked pending on-call lead approval.",
+    "requested_action": "deployment_validation_candidate",
+    "status": "pending",
+    "updated_at": "2026-04-04T20:06:04.084335Z"
+  },
+  "checkpoint_id": "incident-chain-replay-recent-deployment-session-incident-action-stub",
+  "current_phase": "action_stub_pending_approval",
+  "current_step": 6,
+  "incident_id": "incident-replay-1",
+  "latest_checkpoint_time": "2026-04-04T20:06:04.084352Z",
+  "pending_tool_call": null,
+  "pending_verifier": null,
+  "schema_version": 1,
+  "selected_skills": [
+    "incident-triage"
+  ],
+  "session_id": "incident-chain-replay-recent-deployment-session",
+  "summary_of_progress": "Action-stub step produced deployment_validation_candidate for payments-api. Verifier status: pass."
+}

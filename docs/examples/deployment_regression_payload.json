@@ -1,0 +1,16 @@
+{
+  "incident_id": "incident-live-deployment-1",
+  "session_id": "session-live-deployment-1",
+  "title": "payments-api unhealthy after the latest deployment",
+  "service": "payments-api",
+  "symptoms": [
+    "health endpoint is degraded",
+    "timeouts increased after the rollout"
+  ],
+  "impact_summary": "Checkout requests are failing after the latest release.",
+  "service_base_url": "http://127.0.0.1:8001",
+  "expected_bad_version": "2.1.0",
+  "expected_previous_version": "2.0.9",
+  "runbook_reference": "runbooks/payments-api",
+  "ownership_team": "payments-oncall"
+}

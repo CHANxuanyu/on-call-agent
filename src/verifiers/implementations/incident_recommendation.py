@@ -301,12 +301,12 @@ class IncidentRecommendationOutcomeVerifier:
                 )
             )
         if not payload.recommendation_output.action_summary.startswith(
-            ("Validate", "Investigate")
+            ("Validate", "Investigate", "Prepare")
         ):
             diagnostics.append(
                 VerifierDiagnostic(
                     code="non_actionable_summary",
-                    message="action_summary must start with Validate or Investigate",
+                    message="action_summary must start with Validate, Investigate, or Prepare",
                 )
             )
         if not payload.recommendation_output.more_investigation_required:

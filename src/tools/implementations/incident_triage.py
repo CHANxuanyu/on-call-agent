@@ -39,6 +39,9 @@ class IncidentTriageInput(BaseModel):
     recent_deployment: str | None = None
     runbook_reference: str | None = None
     ownership_team: str | None = None
+    service_base_url: str | None = Field(default=None, min_length=1)
+    expected_bad_version: str | None = Field(default=None, min_length=1)
+    expected_previous_version: str | None = Field(default=None, min_length=1)
 
 
 class IncidentTriageOutput(BaseModel):

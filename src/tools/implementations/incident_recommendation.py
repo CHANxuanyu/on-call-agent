@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from tools.implementations.follow_up_investigation import InvestigationTarget
 from tools.implementations.incident_hypothesis import (
     HypothesisType,
     IncidentHypothesisOutput,
@@ -42,6 +43,9 @@ class RecommendationApprovalLevel(StrEnum):
 
     NONE = "none"
     ONCALL_LEAD = "oncall_lead"
+
+
+ALREADY_HEALTHY_ON_KNOWN_GOOD_REF = "runtime_state:already_healthy_on_known_good_version"
 
 
 class IncidentRecommendationInput(BaseModel):
@@ -132,6 +136,45 @@ class IncidentRecommendationBuilderTool:
             f"hypothesis:{hypothesis_output.hypothesis_type}",
             f"evidence:{hypothesis_output.evidence_snapshot_id}",
         ]
+        if self._is_resolved_no_action_hypothesis(hypothesis_output):
+            return IncidentRecommendationOutput(
+                incident_id=hypothesis_output.incident_id,
+                service=hypothesis_output.service,
+                consumed_hypothesis_type=hypothesis_output.hypothesis_type,
+                recommendation_type=RecommendationType.INVESTIGATE_MORE,
+                action_summary=(
+                    f"Prepare no rollback action for {hypothesis_output.service} because "
+                    "live evidence already shows the service healthy on the known-good "
+                    "version."
+                ),
+                justification=(
+                    f"{hypothesis_output.rationale_summary} The safest next step is to keep "
+                    "the session non-actionable unless fresh evidence shows the bad release "
+                    "is active again."
+                ),
+                risk_level=RecommendationRiskLevel.LOW,
+                required_approval_level=RecommendationApprovalLevel.NONE,
+                preconditions=[
+                    "Keep all write actions blocked while the service remains healthy.",
+                    (
+                        "Require fresh verifier-backed evidence before reopening a rollback "
+                        "path."
+                    ),
+                ],
+                supporting_artifact_refs=[
+                    *supporting_refs,
+                    ALREADY_HEALTHY_ON_KNOWN_GOOD_REF,
+                ],
+                expected_outcome=(
+                    "The operator sees a conservative no-action state because the service "
+                    "already appears recovered."
+                ),
+                rollback_or_safety_notes=(
+                    "Do not propose or execute rollback while live evidence already shows "
+                    "the service healthy on the known-good version."
+                ),
+                more_investigation_required=True,
+            )
         if (
             hypothesis_output.hypothesis_type is HypothesisType.DEPLOYMENT_REGRESSION
             and hypothesis_output.evidence_supported
@@ -203,4 +246,16 @@ class IncidentRecommendationBuilderTool:
                 "Avoid proposing rollback or escalation based on the current evidence quality."
             ),
             more_investigation_required=True,
+        )
+
+    def _is_resolved_no_action_hypothesis(
+        self,
+        hypothesis_output: IncidentHypothesisOutput,
+    ) -> bool:
+        return (
+            hypothesis_output.hypothesis_type is HypothesisType.INSUFFICIENT_EVIDENCE
+            and not hypothesis_output.evidence_supported
+            and hypothesis_output.evidence_investigation_target
+            is InvestigationTarget.RECENT_DEPLOYMENT
+            and not hypothesis_output.unresolved_gaps
         )

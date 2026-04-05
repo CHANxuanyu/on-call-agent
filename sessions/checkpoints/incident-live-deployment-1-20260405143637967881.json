@@ -1,0 +1,33 @@
+{
+  "approval_state": {
+    "future_preconditions": [
+      "Confirm the currently deployed version still matches the suspected bad release.",
+      "Confirm the previous version is a known-good rollback target.",
+      "Keep all non-read-only actions blocked until on-call lead approval is recorded.",
+      "Human approval must be recorded before any non-read-only action."
+    ],
+    "reason": "rollback recent deployment",
+    "requested_action": "rollback_recent_deployment_candidate",
+    "status": "approved",
+    "updated_at": "2026-04-05T14:37:49.460077Z"
+  },
+  "checkpoint_id": "incident-live-deployment-1-20260405143637967881-deployment-outcome-verification",
+  "current_phase": "outcome_verification_succeeded",
+  "current_step": 9,
+  "incident_id": "incident-live-deployment-1",
+  "latest_checkpoint_time": "2026-04-05T14:37:49.531664Z",
+  "operator_shell": {
+    "effective_mode": "semi-auto",
+    "mode_reason": "auto-safe execution is disabled in the runtime settings, so the shell must fail closed to semi-auto",
+    "requested_mode": "auto-safe",
+    "updated_at": "2026-04-05T14:36:38.033717Z"
+  },
+  "pending_tool_call": null,
+  "pending_verifier": null,
+  "schema_version": 1,
+  "selected_skills": [
+    "incident-triage"
+  ],
+  "session_id": "incident-live-deployment-1-20260405143637967881",
+  "summary_of_progress": "Outcome verification probed version 2.0.9 with health_status=healthy. Verifier status: pass."
+}

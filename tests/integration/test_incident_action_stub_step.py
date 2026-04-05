@@ -171,8 +171,9 @@ async def test_incident_action_stub_step_builds_approval_gated_candidate(
         is EvaluatedActionType.READ_ONLY_TOOL
     )
     assert checkpoint.approval_state.future_preconditions == [
-        "Confirm the deployment diff matches the affected request path.",
-        "Keep all next actions advisory until on-call lead approval is recorded.",
+        "Confirm the currently deployed version still matches the suspected bad release.",
+        "Confirm the previous version is a known-good rollback target.",
+        "Keep all non-read-only actions blocked until on-call lead approval is recorded.",
         "Human approval must be recorded before any non-read-only action.",
     ]
     assert checkpoint.pending_verifier is None

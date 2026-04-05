@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -20,6 +21,11 @@ from tools.models import (
 DEPLOYMENT_REGRESSION_VALIDATION_GAP = (
     "Need rollback or mitigation confirmation before treating the regression as validated."
 )
+_LIVE_VERSION_PATTERN = re.compile(
+    r"current_version (?P<current_version>\S+) and previous_version (?P<previous_version>\S+)\."
+)
+_LIVE_HEALTH_PATTERN = re.compile(r"healthy=(?P<healthy>True|False)")
+_LIVE_BAD_RELEASE_PATTERN = re.compile(r"bad_release_active=(?P<active>True|False)")
 
 
 class HypothesisType(StrEnum):
@@ -72,10 +78,64 @@ def evidence_supports_deployment_regression(evidence_output: EvidenceReadOutput)
     searchable_text = " ".join(
         [evidence_output.evidence_summary, *evidence_output.observations]
     ).lower()
-    return all(
+    if not all(
         marker in searchable_text
         for marker in ("deploy", "before alert", "timeout")
-    )
+    ):
+        return False
+
+    if _extract_live_bad_release_active(evidence_output) is False:
+        return False
+    return _extract_live_healthy_flag(evidence_output) is not True
+
+
+def evidence_shows_known_good_recovery(
+    evidence_output: EvidenceReadOutput,
+) -> bool:
+    """Return whether live evidence shows the service already recovered."""
+
+    if evidence_output.investigation_target is not InvestigationTarget.RECENT_DEPLOYMENT:
+        return False
+    if _extract_live_bad_release_active(evidence_output) is not False:
+        return False
+    if _extract_live_healthy_flag(evidence_output) is not True:
+        return False
+    live_versions = _extract_live_versions(evidence_output)
+    if live_versions is None:
+        return False
+    current_version, previous_version = live_versions
+    return current_version == previous_version
+
+
+def _extract_live_versions(
+    evidence_output: EvidenceReadOutput,
+) -> tuple[str, str] | None:
+    for observation in evidence_output.observations:
+        match = _LIVE_VERSION_PATTERN.search(observation)
+        if match is not None:
+            return (
+                match.group("current_version"),
+                match.group("previous_version"),
+            )
+    return None
+
+
+def _extract_live_healthy_flag(evidence_output: EvidenceReadOutput) -> bool | None:
+    for observation in evidence_output.observations:
+        match = _LIVE_HEALTH_PATTERN.search(observation)
+        if match is not None:
+            return match.group("healthy") == "True"
+    return None
+
+
+def _extract_live_bad_release_active(
+    evidence_output: EvidenceReadOutput,
+) -> bool | None:
+    for observation in evidence_output.observations:
+        match = _LIVE_BAD_RELEASE_PATTERN.search(observation)
+        if match is not None:
+            return match.group("active") == "True"
+    return None
 
 
 class IncidentHypothesisBuilderTool:
@@ -145,6 +205,37 @@ class IncidentHypothesisBuilderTool:
                 recommended_next_action=(
                     f"Review the deployment diff and validate rollback options for "
                     f"{evidence_output.service}."
+                ),
+                more_investigation_required=True,
+            )
+
+        if evidence_shows_known_good_recovery(evidence_output):
+            current_version, _ = _extract_live_versions(evidence_output) or (
+                "unknown",
+                "unknown",
+            )
+            return IncidentHypothesisOutput(
+                incident_id=evidence_output.incident_id,
+                service=evidence_output.service,
+                evidence_snapshot_id=evidence_output.snapshot_id,
+                evidence_investigation_target=evidence_output.investigation_target,
+                hypothesis_type=HypothesisType.INSUFFICIENT_EVIDENCE,
+                evidence_supported=False,
+                confidence=HypothesisConfidence.LOW,
+                rationale_summary=(
+                    f"Live runtime evidence shows {evidence_output.service} is already "
+                    f"healthy on version {current_version}, so the bad deployment is not "
+                    "currently active and a rollback candidate is not justified."
+                ),
+                supporting_evidence_fields=[
+                    "snapshot_id",
+                    "evidence_summary",
+                    "observations",
+                ],
+                unresolved_gaps=[],
+                recommended_next_action=(
+                    "Inspect the recovered runtime artifacts and continue monitoring before "
+                    "proposing any mitigation."
                 ),
                 more_investigation_required=True,
             )

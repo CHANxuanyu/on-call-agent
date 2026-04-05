@@ -1,0 +1,33 @@
+{
+  "compact_handoff_note": "Rollback executed for payments-api from 2.1.0 to 2.0.9. Outcome verification passed with health_status=healthy, error_rate=0.01, timeout_rate=0.00.",
+  "important_evidence_references": [
+    "evidence:live-deployment-2.1.0",
+    "investigation_target:recent_deployment",
+    "hypothesis:deployment_regression",
+    "rollback:2.1.0->2.0.9",
+    "http://127.0.0.1:8001",
+    "http://127.0.0.1:8001/deployment",
+    "http://127.0.0.1:8001/health",
+    "http://127.0.0.1:8001/metrics"
+  ],
+  "incident_id": "incident-live-deployment-1",
+  "last_updated_at": "2026-04-05T14:37:49.532105Z",
+  "last_updated_by_step": "deployment_outcome_verification",
+  "leading_hypothesis": {
+    "evidence_supported": true,
+    "hypothesis_type": "deployment_regression",
+    "summary": "Evidence from live-deployment-2.1.0 supports a recent deployment regression affecting payments-api."
+  },
+  "recommendation": {
+    "more_investigation_required": false,
+    "recommendation_type": "validate_recent_deployment",
+    "required_approval_level": "oncall_lead",
+    "summary": "Validate rollback readiness for the recent deployment on payments-api and prepare an approval review if rollback preconditions hold."
+  },
+  "schema_version": 1,
+  "service": "payments-api",
+  "source_checkpoint_id": "incident-live-deployment-1-20260405143637967881-deployment-outcome-verification",
+  "source_phase": "outcome_verification_succeeded",
+  "source_session_id": "incident-live-deployment-1-20260405143637967881",
+  "unresolved_gaps": []
+}

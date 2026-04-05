@@ -20,6 +20,8 @@ from runtime.models import (
     SyntheticFailureCode,
     SyntheticFailureSource,
 )
+from tools.implementations.deployment_outcome_probe import DeploymentOutcomeProbeOutput
+from tools.implementations.deployment_rollback import DeploymentRollbackExecutionOutput
 from tools.implementations.evidence_reading import EvidenceReadOutput
 from tools.implementations.follow_up_investigation import (
     FollowUpInvestigationOutput,
@@ -28,7 +30,7 @@ from tools.implementations.follow_up_investigation import (
 from tools.implementations.incident_action_stub import IncidentActionStubOutput
 from tools.implementations.incident_hypothesis import IncidentHypothesisOutput
 from tools.implementations.incident_recommendation import IncidentRecommendationOutput
-from tools.implementations.incident_triage import IncidentTriageOutput
+from tools.implementations.incident_triage import IncidentTriageInput, IncidentTriageOutput
 from transcripts.models import (
     ToolRequestEvent,
     ToolResultEvent,
@@ -53,6 +55,10 @@ _RECOMMENDATION_TOOL_NAME = "incident_recommendation_builder"
 _RECOMMENDATION_VERIFIER_NAME = "incident_recommendation_outcome"
 _ACTION_STUB_TOOL_NAME = "incident_action_stub_builder"
 _ACTION_STUB_VERIFIER_NAME = "incident_action_stub_outcome"
+_ACTION_EXECUTION_TOOL_NAME = "deployment_rollback_executor"
+_ACTION_EXECUTION_VERIFIER_NAME = "deployment_rollback_execution"
+_OUTCOME_VERIFICATION_TOOL_NAME = "deployment_outcome_probe"
+_OUTCOME_VERIFICATION_VERIFIER_NAME = "deployment_outcome_verification"
 
 
 class ArtifactKey(StrEnum):
@@ -64,6 +70,8 @@ class ArtifactKey(StrEnum):
     HYPOTHESIS = "hypothesis"
     RECOMMENDATION = "recommendation"
     ACTION_STUB = "action_stub"
+    ACTION_EXECUTION = "action_execution"
+    OUTCOME_VERIFICATION = "outcome_verification"
 
 
 class ArtifactInsufficiencyCode(StrEnum):
@@ -196,6 +204,17 @@ class SessionArtifactContext:
         """Return the latest local incident working-memory snapshot, if one exists."""
 
         return JsonIncidentWorkingMemoryStore(self.working_memory_path).load_optional()
+
+    def latest_triage_input(self) -> IncidentTriageInput | None:
+        """Return the latest structured triage input if it exists in the transcript."""
+
+        tool_request_event = self._latest_tool_request_event(_TRIAGE_TOOL_NAME)
+        if tool_request_event is None:
+            return None
+        try:
+            return IncidentTriageInput.model_validate(tool_request_event[1].tool_call.arguments)
+        except ValidationError:
+            return None
 
     def has_incident_working_memory(self) -> bool:
         """Return whether a working-memory snapshot exists for the current incident."""
@@ -519,6 +538,82 @@ class SessionArtifactContext:
     def has_verified_action_stub_output(self) -> bool:
         return self.latest_verified_action_stub_output().is_available
 
+    def latest_action_execution_output(
+        self,
+    ) -> ArtifactRecord[DeploymentRollbackExecutionOutput]:
+        return self._artifact_record(
+            artifact=ArtifactKey.ACTION_EXECUTION,
+            tool_name=_ACTION_EXECUTION_TOOL_NAME,
+            verifier_name=_ACTION_EXECUTION_VERIFIER_NAME,
+            model_type=DeploymentRollbackExecutionOutput,
+        )
+
+    def latest_verified_action_execution_output(
+        self,
+    ) -> ArtifactResolution[DeploymentRollbackExecutionOutput]:
+        return self._require_phase_compatible_verified_artifact(
+            record=self.latest_action_execution_output(),
+            compatible_phases=(
+                "action_execution_completed",
+                "outcome_verification_succeeded",
+                "outcome_verification_failed_verification",
+                "outcome_verification_unverified",
+                "outcome_verification_failed_artifacts",
+            ),
+            phase_incompatible_message=(
+                "Prior artifacts do not yet contain a verified rollback execution record."
+            ),
+            missing_output_message=(
+                "Action-execution artifacts indicate a verified rollback execution should exist, "
+                "but the transcript is missing it."
+            ),
+            verifier_missing_message=(
+                "Rollback execution output exists in the transcript, but the verifier result is "
+                "missing."
+            ),
+            verifier_not_passed_message=(
+                "Prior artifacts do not yet contain a verifier-passed rollback execution record."
+            ),
+        )
+
+    def latest_outcome_verification_output(
+        self,
+    ) -> ArtifactRecord[DeploymentOutcomeProbeOutput]:
+        return self._artifact_record(
+            artifact=ArtifactKey.OUTCOME_VERIFICATION,
+            tool_name=_OUTCOME_VERIFICATION_TOOL_NAME,
+            verifier_name=_OUTCOME_VERIFICATION_VERIFIER_NAME,
+            model_type=DeploymentOutcomeProbeOutput,
+        )
+
+    def latest_verified_outcome_verification_output(
+        self,
+    ) -> ArtifactResolution[DeploymentOutcomeProbeOutput]:
+        return self._require_phase_compatible_verified_artifact(
+            record=self.latest_outcome_verification_output(),
+            compatible_phases=(
+                "outcome_verification_succeeded",
+                "outcome_verification_failed_verification",
+                "outcome_verification_unverified",
+                "outcome_verification_failed_artifacts",
+            ),
+            phase_incompatible_message=(
+                "Prior artifacts do not yet contain a verified outcome verification record."
+            ),
+            missing_output_message=(
+                "Outcome-verification artifacts indicate a verified runtime probe should exist, "
+                "but the transcript is missing it."
+            ),
+            verifier_missing_message=(
+                "Outcome-verification output exists in the transcript, but the verifier result is "
+                "missing."
+            ),
+            verifier_not_passed_message=(
+                "Prior artifacts do not yet contain a verifier-passed outcome verification "
+                "record."
+            ),
+        )
+
     def _artifact_record(
         self,
         *,
@@ -807,4 +902,6 @@ class SessionArtifactContext:
             ArtifactKey.HYPOTHESIS: "incident_hypothesis",
             ArtifactKey.RECOMMENDATION: "incident_recommendation",
             ArtifactKey.ACTION_STUB: "incident_action_stub",
+            ArtifactKey.ACTION_EXECUTION: "deployment_rollback_execution",
+            ArtifactKey.OUTCOME_VERIFICATION: "deployment_outcome_verification",
         }[artifact]

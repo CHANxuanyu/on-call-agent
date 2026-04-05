@@ -239,38 +239,52 @@ async def test_live_deployment_regression_cli_runs_closed_loop(
             in " ".join(rollback_permission_event["decision"]["provenance"]["notes"])
         )
 
-        handoff_root = tmp_path / "handoffs"
+
+@pytest.mark.asyncio
+async def test_live_deployment_regression_cli_stops_when_service_is_already_healthy(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with DemoDeploymentTargetServer(port=0) as server:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            rollback_response = await client.post(f"{server.base_url}/rollback")
+            rollback_response.raise_for_status()
+
+        payload_path = _write_live_payload(
+            tmp_path,
+            incident_id="incident-live-already-healthy",
+            session_id="session-live-already-healthy",
+            base_url=server.base_url,
+            expected_bad_version=server.bad_version,
+            expected_previous_version=server.previous_version,
+        )
+
         exit_code = main(
             [
-                "export-handoff",
-                session_id,
+                "start-incident",
+                "--family",
+                "deployment-regression",
+                "--payload",
+                str(payload_path),
                 *_command_roots(tmp_path),
-                "--handoff-root",
-                str(handoff_root),
                 "--json",
             ]
         )
         assert exit_code == 0
-        handoff_payload = json.loads(capsys.readouterr().out)
-        assert handoff_payload["status"] == "written"
-        handoff_json = json.loads(
-            Path(handoff_payload["handoff_path"]).read_text(encoding="utf-8")
+        start_payload = json.loads(capsys.readouterr().out)
+        assert start_payload["session_id"] == "session-live-already-healthy"
+        assert start_payload["current_phase"] == "action_stub_not_actionable"
+        assert start_payload["approval_state"]["status"] == "none"
+        assert "already shows the service healthy" in (
+            start_payload["approval_state"]["reason"] or ""
         )
-        assert handoff_json["handoff"]["current_phase"] == "outcome_verification_succeeded"
-        assert handoff_json["handoff"]["unresolved_gaps"] == []
-        assert (
-            "validate rollback readiness"
-            in handoff_json["handoff"]["recommendation_summary"].lower()
-        )
-        assert (
-            "Runtime probe sees version 2.0.9"
-            in handoff_json["handoff"]["current_operator_attention_point"]
-        )
-        assert any(
-            reference["artifact_name"] == "incident_working_memory"
-            and reference["detail"] == "outcome_verification_succeeded"
-            for reference in handoff_json["handoff"]["derived_from"]
-        )
+
+        working_memory_path = tmp_path / "working_memory" / "incident-live-already-healthy.json"
+        working_memory_payload = json.loads(working_memory_path.read_text(encoding="utf-8"))
+        assert working_memory_payload["unresolved_gaps"] == []
+        assert "already healthy on the known-good version" in working_memory_payload[
+            "compact_handoff_note"
+        ]
 
 
 @pytest.mark.asyncio

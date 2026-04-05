@@ -192,6 +192,29 @@ class IncidentHandoffArtifactRegenerator:
             return "hypothesis", artifact_context.latest_verified_hypothesis_output()
         if phase in {"recommendation_supported", "recommendation_conservative"}:
             return "recommendation", artifact_context.latest_verified_recommendation_output()
-        if phase in {"action_stub_pending_approval", "action_stub_not_actionable"}:
+        if phase in {
+            "action_stub_pending_approval",
+            "action_stub_not_actionable",
+            "action_stub_approved",
+            "action_stub_denied",
+        }:
             return "action_stub", artifact_context.latest_verified_action_stub_output()
+        if phase in {
+            "action_execution_completed",
+            "action_execution_unverified",
+            "action_execution_failed_verification",
+            "action_execution_failed_artifacts",
+            "action_execution_deferred",
+        }:
+            return "action_execution", artifact_context.latest_verified_action_execution_output()
+        if phase in {
+            "outcome_verification_succeeded",
+            "outcome_verification_failed_verification",
+            "outcome_verification_unverified",
+            "outcome_verification_failed_artifacts",
+        }:
+            return (
+                "outcome_verification",
+                artifact_context.latest_verified_outcome_verification_output(),
+            )
         return None

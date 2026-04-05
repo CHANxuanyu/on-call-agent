@@ -7,6 +7,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import TextIO
 
@@ -51,8 +52,46 @@ from tools.implementations.incident_hypothesis import (
     HypothesisType,
 )
 from tools.implementations.incident_recommendation import RecommendationType
-from transcripts.models import CheckpointWrittenEvent, TranscriptEventType, VerifierResultEvent
+from tools.implementations.incident_triage import IncidentTriageInput
+from transcripts.models import (
+    ApprovalResolvedEvent,
+    CheckpointWrittenEvent,
+    PermissionDecisionEvent,
+    ResumeStartedEvent,
+    ToolRequestEvent,
+    ToolResultEvent,
+    TranscriptEvent,
+    TranscriptEventType,
+    VerifierResultEvent,
+)
 from transcripts.writer import JsonlTranscriptStore
+
+_DEFAULT_SESSION_LIST_LIMIT = 10
+_DEFAULT_TAIL_LIMIT = 8
+_IMPORTANT_ACTIVITY_TOOL_NAMES = frozenset(
+    {
+        "deployment_rollback_executor",
+        "deployment_outcome_probe",
+    }
+)
+
+
+class AutoSafeGateConditionStatus(StrEnum):
+    """Operator-facing status for one auto-safe gate condition."""
+
+    PASS = "pass"
+    FAIL = "fail"
+    UNKNOWN = "unknown"
+
+
+class AutoSafeGateCondition(BaseModel):
+    """One explicit auto-safe gate check for operator explainability."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    status: AutoSafeGateConditionStatus
+    detail: str = Field(min_length=1)
 
 
 class AutoSafeGateResult(BaseModel):
@@ -63,6 +102,168 @@ class AutoSafeGateResult(BaseModel):
     allowed: bool
     reason: str = Field(min_length=1)
     checked_conditions: list[str] = Field(default_factory=list)
+    conditions: list[AutoSafeGateCondition] = Field(default_factory=list)
+
+
+class SessionWorkspaceSummary(BaseModel):
+    """Compact durable session summary for operator workspace views."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(min_length=1)
+    incident_id: str = Field(min_length=1)
+    family: str = Field(min_length=1)
+    current_phase: str = Field(min_length=1)
+    requested_mode: str = Field(min_length=1)
+    effective_mode: str = Field(min_length=1)
+    approval_status: str = Field(min_length=1)
+    latest_verifier: str = Field(min_length=1)
+    last_updated: datetime
+
+
+def _format_timestamp(value: datetime) -> str:
+    """Render checkpoint and transcript times consistently for operators."""
+
+    return value.astimezone(UTC).isoformat(timespec="seconds")
+
+
+def _truncate_text(text: str, *, limit: int = 88) -> str:
+    """Keep compact operator lines readable without losing the leading signal."""
+
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 3].rstrip()}..."
+
+
+def _mode_display(requested_mode: str, effective_mode: str) -> str:
+    """Render requested/effective autonomy mode in one compact field."""
+
+    if requested_mode == effective_mode:
+        return requested_mode
+    return f"{requested_mode}->{effective_mode}"
+
+
+def _family_from_triage_input(triage_input: IncidentTriageInput | None) -> str:
+    """Infer the current narrow incident family from durable intake artifacts."""
+
+    if (
+        triage_input is not None
+        and triage_input.service_base_url is not None
+        and triage_input.expected_bad_version is not None
+        and triage_input.expected_previous_version is not None
+    ):
+        return "deployment-regression"
+    return "unknown"
+
+
+def _latest_triage_input_from_events(
+    events: tuple[TranscriptEvent, ...],
+) -> IncidentTriageInput | None:
+    """Read the latest structured triage input directly from transcript events."""
+
+    for event in reversed(events):
+        if not isinstance(event, ToolRequestEvent):
+            continue
+        if event.tool_call.name != "incident_payload_summary":
+            continue
+        try:
+            return IncidentTriageInput.model_validate(event.tool_call.arguments)
+        except ValidationError:
+            return None
+    return None
+
+
+def _latest_verifier_summary_from_events(events: tuple[TranscriptEvent, ...]) -> str:
+    """Return the latest verifier summary from transcript events only."""
+
+    for event in reversed(events):
+        if isinstance(event, VerifierResultEvent):
+            return (
+                f"{event.verifier_name}={event.result.status.value}: "
+                f"{event.result.summary}"
+            )
+    return "No verifier result has been recorded yet."
+
+
+def _handoff_summary(
+    *,
+    incident_id: str,
+    handoff_root: Path,
+) -> str:
+    """Return the current handoff export status for the incident if known."""
+
+    handoff_path = handoff_root / f"{incident_id}.json"
+    if handoff_path.exists():
+        return f"available at {handoff_path}"
+    return "not exported yet"
+
+
+def _important_activity_events(
+    events: tuple[TranscriptEvent, ...],
+    *,
+    limit: int,
+) -> tuple[TranscriptEvent, ...]:
+    """Filter recent operator-relevant activity without building a new audit layer."""
+
+    filtered = tuple(
+        event
+        for event in events
+        if isinstance(
+            event,
+            (
+                ApprovalResolvedEvent,
+                CheckpointWrittenEvent,
+                PermissionDecisionEvent,
+                ResumeStartedEvent,
+                VerifierResultEvent,
+            ),
+        )
+        or (
+            isinstance(event, ToolResultEvent)
+            and event.tool_name in _IMPORTANT_ACTIVITY_TOOL_NAMES
+        )
+    )
+    return filtered[-limit:]
+
+
+def _recent_activity_summary(event: TranscriptEvent) -> str:
+    """Render one recent activity line for the shell tail view."""
+
+    if isinstance(event, CheckpointWrittenEvent):
+        return f"checkpoint: {event.summary_of_progress}"
+    if isinstance(event, VerifierResultEvent):
+        return (
+            f"verifier {event.verifier_name}={event.result.status.value}: "
+            f"{event.result.summary}"
+        )
+    if isinstance(event, ApprovalResolvedEvent):
+        return (
+            f"approval {event.decision} for {event.requested_action}"
+            + (f": {event.reason}" if event.reason is not None else "")
+        )
+    if isinstance(event, PermissionDecisionEvent):
+        return (
+            f"permission {event.decision.action.value} for {event.decision.tool_name}: "
+            f"{event.decision.reason}"
+        )
+    if isinstance(event, ResumeStartedEvent):
+        return f"resume: {event.reason}"
+    if isinstance(event, ToolResultEvent):
+        return f"tool {event.tool_name} returned {event.result.status.value}"
+    return event.event_type
+
+
+def render_recent_activity_events(events: tuple[TranscriptEvent, ...]) -> str:
+    """Render the recent activity tail for the current session."""
+
+    lines = []
+    for event in events:
+        lines.append(
+            f"{_format_timestamp(event.timestamp)} "
+            f"step={event.step_index if event.step_index is not None else 'n/a'} "
+            f"{_recent_activity_summary(event)}"
+        )
+    return "\n".join(lines)
 
 
 def derived_working_memory_root(checkpoint_root: Path) -> Path:
@@ -73,6 +274,8 @@ def derived_working_memory_root(checkpoint_root: Path) -> Path:
 
 def build_shell_status_payload(
     artifact_context: SessionArtifactContext,
+    *,
+    handoff_root: Path,
 ) -> dict[str, str | int | bool | None]:
     """Build a compact operator-facing status payload."""
 
@@ -83,6 +286,7 @@ def build_shell_status_payload(
     return {
         "session_id": artifact_context.session_id,
         "incident_id": checkpoint.incident_id,
+        "family": _family_from_triage_input(artifact_context.latest_triage_input()),
         "current_phase": checkpoint.current_phase,
         "current_step": checkpoint.current_step,
         "requested_mode": operator_shell.requested_mode.value,
@@ -93,6 +297,11 @@ def build_shell_status_payload(
         "next_action": _next_action_summary(artifact_context),
         "current_evidence_summary": _current_evidence_summary(artifact_context),
         "latest_verifier": latest_verifier,
+        "handoff": _handoff_summary(
+            incident_id=checkpoint.incident_id,
+            handoff_root=handoff_root,
+        ),
+        "last_updated": _format_timestamp(checkpoint.latest_checkpoint_time),
     }
 
 
@@ -100,9 +309,10 @@ def render_shell_status_payload(payload: dict[str, str | int | bool | None]) -> 
     """Render the compact operator shell status view."""
 
     lines = [
-        f"session: {payload['session_id']} incident={payload['incident_id']}",
-        f"mode: requested={payload['requested_mode']} effective={payload['effective_mode']}",
+        "session: "
+        f"{payload['session_id']} incident={payload['incident_id']} family={payload['family']}",
         f"phase: {payload['current_phase']} step={payload['current_step']}",
+        f"mode: requested={payload['requested_mode']} effective={payload['effective_mode']}",
         "approval: "
         f"{payload['approval_status']}"
         + (
@@ -113,9 +323,11 @@ def render_shell_status_payload(payload: dict[str, str | int | bool | None]) -> 
         f"next: {payload['next_action']}",
         f"evidence: {payload['current_evidence_summary']}",
         f"verifier: {payload['latest_verifier']}",
+        f"handoff: {payload['handoff']}",
+        f"updated: {payload['last_updated']}",
     ]
     if payload["mode_reason"] is not None:
-        lines.insert(2, f"mode_reason: {payload['mode_reason']}")
+        lines.insert(3, f"downgrade_reason: {payload['mode_reason']}")
     return "\n".join(lines)
 
 
@@ -139,13 +351,7 @@ def _current_evidence_summary(artifact_context: SessionArtifactContext) -> str:
 
 
 def _latest_verifier_summary(artifact_context: SessionArtifactContext) -> str:
-    for event in reversed(artifact_context.transcript_events):
-        if isinstance(event, VerifierResultEvent):
-            return (
-                f"{event.verifier_name}={event.result.status.value}: "
-                f"{event.result.summary}"
-            )
-    return "No verifier result has been recorded yet."
+    return _latest_verifier_summary_from_events(artifact_context.transcript_events)
 
 
 def _next_action_summary(artifact_context: SessionArtifactContext) -> str:
@@ -157,10 +363,17 @@ def _next_action_summary(artifact_context: SessionArtifactContext) -> str:
         return "Review the rollback candidate and run /approve or /deny."
     if checkpoint.current_phase == "action_stub_denied":
         return "Inspect the artifacts and decide whether further read-only investigation is needed."
+    if checkpoint.current_phase == "action_stub_not_actionable":
+        return (
+            "No rollback candidate is active. Inspect the evidence, export handoff, "
+            "or continue monitoring."
+        )
     if checkpoint.current_phase == "action_execution_completed":
         return "Run /verify to confirm post-rollback recovery."
     if checkpoint.current_phase == "outcome_verification_succeeded":
         return "Export handoff or continue monitoring the recovered service."
+    if checkpoint.current_phase == "follow_up_complete_no_action":
+        return "No further action is currently indicated; inspect the session or export handoff."
 
     action_stub = artifact_context.latest_verified_action_stub_output().artifact
     if action_stub is not None:
@@ -239,6 +452,9 @@ class OperatorShell:
             if command == "new":
                 self._handle_new(arguments)
                 return False
+            if command == "sessions":
+                self._handle_sessions(arguments)
+                return False
             if command == "resume":
                 self._handle_resume(arguments)
                 return False
@@ -250,6 +466,12 @@ class OperatorShell:
                 return False
             if command == "audit":
                 self._handle_audit(arguments)
+                return False
+            if command == "tail":
+                self._handle_tail(arguments)
+                return False
+            if command in {"why-not-auto", "explain-mode"}:
+                self._handle_why_not_auto(arguments)
                 return False
             if command == "approve":
                 self._handle_approval("approve", arguments)
@@ -298,7 +520,11 @@ class OperatorShell:
         self._sync_from_context(context)
         context = self._maybe_auto_progress(context)
         self._sync_from_context(context)
-        self._write(render_shell_status_payload(build_shell_status_payload(context)))
+        self._write(
+            render_shell_status_payload(
+                build_shell_status_payload(context, handoff_root=self.handoff_root)
+            )
+        )
 
     def _handle_new(self, arguments: list[str]) -> None:
         payload_path, force_new_session = self._parse_new_arguments(arguments)
@@ -324,24 +550,53 @@ class OperatorShell:
         self._sync_from_context(context)
         context = self._maybe_auto_progress(context)
         self._sync_from_context(context)
-        self._write(render_shell_status_payload(build_shell_status_payload(context)))
+        self._write(
+            render_shell_status_payload(
+                build_shell_status_payload(context, handoff_root=self.handoff_root)
+            )
+        )
+
+    def _handle_sessions(self, arguments: list[str]) -> None:
+        limit = self._parse_limit_arguments(
+            arguments,
+            command="/sessions",
+            default_limit=_DEFAULT_SESSION_LIST_LIMIT,
+        )
+        sessions = self._list_session_summaries()
+        if not sessions:
+            self._write(f"No sessions found under {self.checkpoint_root}.")
+            return
+        self._write(self._render_session_summaries(sessions[:limit]))
+        self._write("Use /resume <session-id> or /resume <index> to activate a session.")
 
     def _handle_resume(self, arguments: list[str]) -> None:
         if len(arguments) != 1:
-            raise ValueError("/resume requires exactly one session id")
-        session_id = arguments[0]
+            raise ValueError("/resume requires exactly one session id or numeric /sessions index")
+        session_id, index = self._resolve_resume_target(arguments[0])
         context = self._load_context(session_id)
         self.current_session_id = session_id
         self._sync_from_context(context)
         context = self._maybe_auto_progress(context)
         self._sync_from_context(context)
-        self._write(render_shell_status_payload(build_shell_status_payload(context)))
+        if index is None:
+            self._write(f"resumed session: {session_id}")
+        else:
+            self._write(f"resumed session [{index}]: {session_id}")
+        self._write(
+            render_shell_status_payload(
+                build_shell_status_payload(context, handoff_root=self.handoff_root)
+            )
+        )
 
     def _handle_status(self, arguments: list[str]) -> None:
         if arguments:
             raise ValueError("/status does not take arguments")
         context = self._require_current_context()
-        self._write(render_shell_status_payload(build_shell_status_payload(context)))
+        self._write(
+            render_shell_status_payload(
+                build_shell_status_payload(context, handoff_root=self.handoff_root)
+            )
+        )
 
     def _handle_inspect(self, arguments: list[str]) -> None:
         subject = arguments[0] if arguments else "artifacts"
@@ -394,6 +649,26 @@ class OperatorShell:
                 f"limit={payload['applied_filters']['limit'] or 'none'}"
             )
 
+    def _handle_tail(self, arguments: list[str]) -> None:
+        limit = self._parse_limit_arguments(
+            arguments,
+            command="/tail",
+            default_limit=_DEFAULT_TAIL_LIMIT,
+        )
+        context = self._require_current_context()
+        events = _important_activity_events(context.transcript_events, limit=limit)
+        if not events:
+            self._write("No recent operator-facing activity has been recorded yet.")
+            return
+        self._write(render_recent_activity_events(events))
+
+    def _handle_why_not_auto(self, arguments: list[str]) -> None:
+        if arguments:
+            raise ValueError("/why-not-auto does not take arguments")
+        context = self._require_current_context()
+        gate = self.evaluate_auto_safe_gate(context)
+        self._write(self._render_auto_safe_explanation(context, gate))
+
     def _handle_approval(self, decision: str, arguments: list[str]) -> None:
         context = self._require_current_context()
         default_reason = (
@@ -411,7 +686,11 @@ class OperatorShell:
         )
         refreshed = self._load_context(context.session_id)
         self._sync_from_context(refreshed)
-        self._write(render_shell_status_payload(build_shell_status_payload(refreshed)))
+        self._write(
+            render_shell_status_payload(
+                build_shell_status_payload(refreshed, handoff_root=self.handoff_root)
+            )
+        )
 
     def _handle_verify(self, arguments: list[str]) -> None:
         if arguments:
@@ -424,7 +703,11 @@ class OperatorShell:
         )
         refreshed = self._load_context(context.session_id)
         self._sync_from_context(refreshed)
-        self._write(render_shell_status_payload(build_shell_status_payload(refreshed)))
+        self._write(
+            render_shell_status_payload(
+                build_shell_status_payload(refreshed, handoff_root=self.handoff_root)
+            )
+        )
 
     def _handle_handoff(self, arguments: list[str]) -> None:
         if arguments:
@@ -483,25 +766,55 @@ class OperatorShell:
         artifact_context: SessionArtifactContext,
     ) -> AutoSafeGateResult:
         checks: list[str] = []
+        conditions: list[AutoSafeGateCondition] = []
+
+        def record_condition(
+            name: str,
+            status: AutoSafeGateConditionStatus,
+            detail: str,
+        ) -> None:
+            conditions.append(
+                AutoSafeGateCondition(name=name, status=status, detail=detail)
+            )
+            if status is AutoSafeGateConditionStatus.PASS:
+                checks.append(detail)
+
         policy = self.settings.autonomy.auto_safe
         if not policy.enabled:
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
+            record_condition(
+                "policy_enabled",
+                AutoSafeGateConditionStatus.FAIL,
+                (
                     "auto-safe execution is disabled in the runtime settings, so the shell "
                     "must fail closed to semi-auto"
                 ),
-                checked_conditions=checks,
             )
-        checks.append("auto-safe policy is enabled")
+        else:
+            record_condition(
+                "policy_enabled",
+                AutoSafeGateConditionStatus.PASS,
+                "auto-safe policy is enabled",
+            )
 
-        if artifact_context.checkpoint.current_phase != "action_stub_pending_approval":
-            return AutoSafeGateResult(
-                allowed=False,
-                reason="auto-safe only applies at the pending approval boundary",
-                checked_conditions=checks,
+        if (
+            artifact_context.checkpoint.current_phase == "action_stub_pending_approval"
+            and artifact_context.checkpoint.approval_state.status is ApprovalStatus.PENDING
+        ):
+            record_condition(
+                "pending_approval_boundary",
+                AutoSafeGateConditionStatus.PASS,
+                "session is at the pending approval boundary",
             )
-        checks.append("session is at the pending approval boundary")
+        else:
+            record_condition(
+                "pending_approval_boundary",
+                AutoSafeGateConditionStatus.FAIL,
+                (
+                    "auto-safe only applies at the pending approval boundary "
+                    f"(phase={artifact_context.checkpoint.current_phase}, "
+                    f"approval_status={artifact_context.checkpoint.approval_state.status.value})"
+                ),
+            )
 
         triage_input = artifact_context.latest_triage_input()
         if (
@@ -510,175 +823,307 @@ class OperatorShell:
             or triage_input.expected_bad_version is None
             or triage_input.expected_previous_version is None
         ):
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
+            record_condition(
+                "triage_context",
+                AutoSafeGateConditionStatus.UNKNOWN,
+                (
                     "auto-safe requires the original live target and expected versions from "
                     "incident intake"
                 ),
-                checked_conditions=checks,
+            )
+            triage_input = None
+        else:
+            record_condition(
+                "triage_context",
+                AutoSafeGateConditionStatus.PASS,
+                "intake preserved the live target and expected versions",
             )
 
-        if triage_input.service_base_url not in policy.allowed_base_urls:
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
+        if triage_input is None:
+            record_condition(
+                "target_allowlisted",
+                AutoSafeGateConditionStatus.UNKNOWN,
+                "target allowlist status is unknown because the live target is unavailable",
+            )
+        elif triage_input.service_base_url not in policy.allowed_base_urls:
+            record_condition(
+                "target_allowlisted",
+                AutoSafeGateConditionStatus.FAIL,
+                (
                     f"target {triage_input.service_base_url} is not allowlisted for "
                     "auto-safe execution"
                 ),
-                checked_conditions=checks,
             )
-        checks.append("target base URL is allowlisted")
+        else:
+            record_condition(
+                "target_allowlisted",
+                AutoSafeGateConditionStatus.PASS,
+                f"target {triage_input.service_base_url} is allowlisted",
+            )
 
         hypothesis = artifact_context.latest_verified_hypothesis_output().artifact
         recommendation = artifact_context.latest_verified_recommendation_output().artifact
         action_stub = artifact_context.latest_verified_action_stub_output().artifact
         if hypothesis is None or recommendation is None or action_stub is None:
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
+            record_condition(
+                "verified_artifacts",
+                AutoSafeGateConditionStatus.UNKNOWN,
+                (
                     "auto-safe requires verified hypothesis, recommendation, and action stub "
                     "artifacts"
                 ),
-                checked_conditions=checks,
             )
-        checks.append("verified hypothesis, recommendation, and action stub are present")
+        else:
+            record_condition(
+                "verified_artifacts",
+                AutoSafeGateConditionStatus.PASS,
+                "verified hypothesis, recommendation, and action stub are present",
+            )
 
         if (
-            hypothesis.hypothesis_type is not HypothesisType.DEPLOYMENT_REGRESSION
+            hypothesis is None
+            or hypothesis.hypothesis_type is not HypothesisType.DEPLOYMENT_REGRESSION
             or not hypothesis.evidence_supported
         ):
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
+            record_condition(
+                "supported_hypothesis",
+                (
+                    AutoSafeGateConditionStatus.UNKNOWN
+                    if hypothesis is None
+                    else AutoSafeGateConditionStatus.FAIL
+                ),
+                (
                     "auto-safe requires a strongly supported deployment-regression "
                     "hypothesis"
                 ),
-                checked_conditions=checks,
             )
-        checks.append("deployment-regression hypothesis is verifier-backed and supported")
+        else:
+            record_condition(
+                "supported_hypothesis",
+                AutoSafeGateConditionStatus.PASS,
+                "deployment-regression hypothesis is verifier-backed and supported",
+            )
 
         if (
-            recommendation.recommendation_type
+            recommendation is None
+            or recommendation.recommendation_type
             is not RecommendationType.VALIDATE_RECENT_DEPLOYMENT
         ):
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
+            record_condition(
+                "supported_recommendation",
+                (
+                    AutoSafeGateConditionStatus.UNKNOWN
+                    if recommendation is None
+                    else AutoSafeGateConditionStatus.FAIL
+                ),
+                (
                     "auto-safe requires the rollback-readiness recommendation branch for "
                     "recent deployment regression"
                 ),
-                checked_conditions=checks,
             )
-        checks.append("recommendation matches rollback-readiness validation")
+        else:
+            record_condition(
+                "supported_recommendation",
+                AutoSafeGateConditionStatus.PASS,
+                "recommendation matches rollback-readiness validation",
+            )
 
         if (
-            action_stub.action_candidate_type
+            action_stub is None
+            or action_stub.action_candidate_type
             is not ActionCandidateType.ROLLBACK_RECENT_DEPLOYMENT_CANDIDATE
             or not action_stub.action_candidate_created
         ):
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
-                    "auto-safe requires the bounded rollback_recent_deployment_candidate"
+            record_condition(
+                "bounded_action_candidate",
+                (
+                    AutoSafeGateConditionStatus.UNKNOWN
+                    if action_stub is None
+                    else AutoSafeGateConditionStatus.FAIL
                 ),
-                checked_conditions=checks,
+                "auto-safe requires the bounded rollback_recent_deployment_candidate",
             )
-        checks.append("action stub is the bounded rollback candidate")
+        else:
+            record_condition(
+                "bounded_action_candidate",
+                AutoSafeGateConditionStatus.PASS,
+                "action stub is the bounded rollback candidate",
+            )
 
         working_memory = artifact_context.latest_incident_working_memory()
         if working_memory is None:
-            return AutoSafeGateResult(
-                allowed=False,
-                reason="auto-safe requires current incident working memory",
-                checked_conditions=checks,
+            record_condition(
+                "working_memory",
+                AutoSafeGateConditionStatus.UNKNOWN,
+                "auto-safe requires current incident working memory",
+            )
+        else:
+            record_condition(
+                "working_memory",
+                AutoSafeGateConditionStatus.PASS,
+                "current incident working memory is present",
             )
 
-        blocking_gaps = [
-            gap
-            for gap in working_memory.unresolved_gaps
-            if gap != DEPLOYMENT_REGRESSION_VALIDATION_GAP
-        ]
-        if blocking_gaps:
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
-                    "auto-safe found unresolved blocking gaps: "
-                    + "; ".join(blocking_gaps)
-                ),
-                checked_conditions=checks,
+        if working_memory is None:
+            record_condition(
+                "blocking_gaps",
+                AutoSafeGateConditionStatus.UNKNOWN,
+                "blocking gap status is unknown because current working memory is unavailable",
             )
-        checks.append("no unresolved blocking gaps remain before rollback")
-
-        try:
-            with httpx.Client(timeout=5.0) as client:
-                deployment_response = client.get(
-                    f"{triage_input.service_base_url.rstrip('/')}/deployment"
+        else:
+            blocking_gaps = [
+                gap
+                for gap in working_memory.unresolved_gaps
+                if gap != DEPLOYMENT_REGRESSION_VALIDATION_GAP
+            ]
+            if blocking_gaps:
+                record_condition(
+                    "blocking_gaps",
+                    AutoSafeGateConditionStatus.FAIL,
+                    "auto-safe found unresolved blocking gaps: " + "; ".join(blocking_gaps),
                 )
-                deployment_response.raise_for_status()
-            deployment = DemoServiceDeploymentResponse.model_validate(
-                deployment_response.json()
-            )
-        except (httpx.HTTPError, ValidationError) as exc:
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=f"auto-safe could not confirm live deployment state: {exc}",
-                checked_conditions=checks,
-            )
+            else:
+                record_condition(
+                    "blocking_gaps",
+                    AutoSafeGateConditionStatus.PASS,
+                    "no unresolved blocking gaps remain before rollback",
+                )
 
-        if deployment.current_version != triage_input.expected_bad_version:
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
+        deployment: DemoServiceDeploymentResponse | None = None
+        if triage_input is None:
+            record_condition(
+                "live_deployment_state",
+                AutoSafeGateConditionStatus.UNKNOWN,
+                (
+                    "auto-safe could not confirm live deployment state because the "
+                    "target is unavailable"
+                ),
+            )
+        else:
+            try:
+                with httpx.Client(timeout=5.0) as client:
+                    deployment_response = client.get(
+                        f"{triage_input.service_base_url.rstrip('/')}/deployment"
+                    )
+                    deployment_response.raise_for_status()
+                deployment = DemoServiceDeploymentResponse.model_validate(
+                    deployment_response.json()
+                )
+                record_condition(
+                    "live_deployment_state",
+                    AutoSafeGateConditionStatus.PASS,
+                    "live deployment state is reachable and typed",
+                )
+            except (httpx.HTTPError, ValidationError) as exc:
+                record_condition(
+                    "live_deployment_state",
+                    AutoSafeGateConditionStatus.UNKNOWN,
+                    f"auto-safe could not confirm live deployment state: {exc}",
+                )
+
+        if triage_input is None or deployment is None:
+            record_condition(
+                "live_current_version",
+                AutoSafeGateConditionStatus.UNKNOWN,
+                (
+                    "current-version eligibility is unknown because live deployment "
+                    "state is incomplete"
+                ),
+            )
+            record_condition(
+                "live_previous_version",
+                AutoSafeGateConditionStatus.UNKNOWN,
+                (
+                    "previous-version eligibility is unknown because live deployment "
+                    "state is incomplete"
+                ),
+            )
+            record_condition(
+                "live_bad_release_state",
+                AutoSafeGateConditionStatus.UNKNOWN,
+                (
+                    "live bad-release eligibility is unknown because live deployment "
+                    "state is incomplete"
+                ),
+            )
+        else:
+            if deployment.current_version != triage_input.expected_bad_version:
+                record_condition(
+                    "live_current_version",
+                    AutoSafeGateConditionStatus.FAIL,
                     "auto-safe refused because the live current version no longer matches "
-                    f"the expected bad version {triage_input.expected_bad_version}"
-                ),
-                checked_conditions=checks,
-            )
-        checks.append("live current version matches the expected bad version")
+                    f"the expected bad version {triage_input.expected_bad_version}",
+                )
+            else:
+                record_condition(
+                    "live_current_version",
+                    AutoSafeGateConditionStatus.PASS,
+                    "live current version matches the expected bad version",
+                )
 
-        if deployment.previous_version != triage_input.expected_previous_version:
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
+            if deployment.previous_version != triage_input.expected_previous_version:
+                record_condition(
+                    "live_previous_version",
+                    AutoSafeGateConditionStatus.FAIL,
                     "auto-safe refused because the live previous version does not match "
-                    f"the expected previous version {triage_input.expected_previous_version}"
-                ),
-                checked_conditions=checks,
-            )
-        checks.append("live previous version matches the expected known-good version")
+                    f"the expected previous version {triage_input.expected_previous_version}",
+                )
+            else:
+                record_condition(
+                    "live_previous_version",
+                    AutoSafeGateConditionStatus.PASS,
+                    "live previous version matches the expected known-good version",
+                )
 
-        if (
-            not deployment.recent_deployment
-            or not deployment.bad_release_active
-            or not deployment.rollback_available
-        ):
-            return AutoSafeGateResult(
-                allowed=False,
-                reason=(
+            if (
+                not deployment.recent_deployment
+                or not deployment.bad_release_active
+                or not deployment.rollback_available
+            ):
+                record_condition(
+                    "live_bad_release_state",
+                    AutoSafeGateConditionStatus.FAIL,
                     "auto-safe refused because the live deployment endpoint no longer reports "
-                    "a recent active bad release with rollback available"
-                ),
-                checked_conditions=checks,
-            )
-        checks.append("live deployment endpoint still reports a rollback-safe bad release")
+                    "a recent active bad release with rollback available",
+                )
+            else:
+                record_condition(
+                    "live_bad_release_state",
+                    AutoSafeGateConditionStatus.PASS,
+                    "live deployment endpoint still reports a rollback-safe bad release",
+                )
 
         outcome_probe = artifact_context.latest_verified_outcome_verification_output().artifact
         if outcome_probe is not None and isinstance(outcome_probe, DeploymentOutcomeProbeOutput):
-            return AutoSafeGateResult(
-                allowed=False,
-                reason="auto-safe is only valid before rollback execution has already completed",
-                checked_conditions=checks,
+            record_condition(
+                "rollback_not_already_executed",
+                AutoSafeGateConditionStatus.FAIL,
+                "auto-safe is only valid before rollback execution has already completed",
             )
-        checks.append("rollback has not already been executed")
+        else:
+            record_condition(
+                "rollback_not_already_executed",
+                AutoSafeGateConditionStatus.PASS,
+                "rollback has not already been executed",
+            )
 
+        blockers = [
+            condition.detail
+            for condition in conditions
+            if condition.status is not AutoSafeGateConditionStatus.PASS
+        ]
         return AutoSafeGateResult(
-            allowed=True,
+            allowed=not blockers,
             reason=(
-                "all narrow auto-safe conditions passed for the allowlisted "
-                "deployment-regression rollback path"
+                blockers[0]
+                if blockers
+                else (
+                    "all narrow auto-safe conditions passed for the allowlisted "
+                    "deployment-regression rollback path"
+                )
             ),
             checked_conditions=checks,
+            conditions=conditions,
         )
 
     def _write_operator_shell_state(
@@ -770,6 +1215,97 @@ class OperatorShell:
             "'/new --reuse-payload-session <payload>'"
         )
 
+    def _parse_limit_arguments(
+        self,
+        arguments: list[str],
+        *,
+        command: str,
+        default_limit: int,
+    ) -> int:
+        if not arguments:
+            return default_limit
+        if len(arguments) == 2 and arguments[0] == "--limit":
+            limit = int(arguments[1])
+            if limit < 1:
+                raise ValueError(f"{command} --limit must be greater than zero")
+            return limit
+        raise ValueError(f"{command} accepts only '--limit <n>'")
+
+    def _list_session_summaries(self) -> list[SessionWorkspaceSummary]:
+        if not self.checkpoint_root.exists():
+            return []
+
+        sessions: list[SessionWorkspaceSummary] = []
+        for checkpoint_path in sorted(self.checkpoint_root.glob("*.json")):
+            try:
+                checkpoint = JsonCheckpointStore(checkpoint_path).load()
+            except (OSError, ValueError, ValidationError):
+                continue
+
+            transcript_path = self.transcript_root / f"{checkpoint.session_id}.jsonl"
+            try:
+                events = (
+                    JsonlTranscriptStore(transcript_path).read_all()
+                    if transcript_path.exists()
+                    else ()
+                )
+            except (OSError, ValueError, ValidationError):
+                events = ()
+
+            triage_input = _latest_triage_input_from_events(events)
+            sessions.append(
+                SessionWorkspaceSummary(
+                    session_id=checkpoint.session_id,
+                    incident_id=checkpoint.incident_id,
+                    family=_family_from_triage_input(triage_input),
+                    current_phase=checkpoint.current_phase,
+                    requested_mode=checkpoint.operator_shell.requested_mode.value,
+                    effective_mode=checkpoint.operator_shell.effective_mode.value,
+                    approval_status=checkpoint.approval_state.status.value,
+                    latest_verifier=_latest_verifier_summary_from_events(events),
+                    last_updated=checkpoint.latest_checkpoint_time,
+                )
+            )
+
+        sessions.sort(
+            key=lambda summary: (summary.last_updated, summary.session_id),
+            reverse=True,
+        )
+        return sessions
+
+    def _render_session_summaries(
+        self,
+        summaries: list[SessionWorkspaceSummary],
+    ) -> str:
+        lines = ["Recent sessions:"]
+        for index, summary in enumerate(summaries, start=1):
+            marker = "*" if summary.session_id == self.current_session_id else " "
+            lines.append(
+                f"{marker}[{index}] {summary.session_id} "
+                f"incident={summary.incident_id} "
+                f"family={summary.family} "
+                f"phase={summary.current_phase} "
+                f"mode={_mode_display(summary.requested_mode, summary.effective_mode)} "
+                f"approval={summary.approval_status} "
+                f"verifier={_truncate_text(summary.latest_verifier)} "
+                f"updated={_format_timestamp(summary.last_updated)}"
+            )
+        return "\n".join(lines)
+
+    def _resolve_resume_target(self, target: str) -> tuple[str, int | None]:
+        if target.isdigit():
+            index = int(target)
+            if index < 1:
+                raise ValueError("/resume index must be greater than zero")
+            summaries = self._list_session_summaries()
+            if index > len(summaries):
+                raise ValueError(
+                    f"/resume index {index} is out of range for "
+                    f"{len(summaries)} discovered sessions"
+                )
+            return summaries[index - 1].session_id, index
+        return target, None
+
     def _require_current_context(self) -> SessionArtifactContext:
         if self.current_session_id is None:
             raise ValueError("no session is active; use /new or /resume first")
@@ -799,6 +1335,46 @@ class OperatorShell:
             f"effective={self.effective_mode.value}{reason_suffix}"
         )
 
+    def _render_auto_safe_explanation(
+        self,
+        artifact_context: SessionArtifactContext,
+        gate: AutoSafeGateResult,
+    ) -> str:
+        operator_shell = artifact_context.checkpoint.operator_shell
+        triage_input = artifact_context.latest_triage_input()
+        if triage_input is None or triage_input.service_base_url is None:
+            target_line = "target: unavailable allowlisted=unknown"
+        else:
+            allowlisted = (
+                triage_input.service_base_url
+                in self.settings.autonomy.auto_safe.allowed_base_urls
+            )
+            target_line = (
+                f"target: {triage_input.service_base_url} "
+                f"allowlisted={'yes' if allowlisted else 'no'}"
+            )
+
+        lines = [
+            "session: "
+            f"{artifact_context.session_id} incident={artifact_context.checkpoint.incident_id}",
+            "mode: "
+            f"requested={operator_shell.requested_mode.value} "
+            f"effective={operator_shell.effective_mode.value}",
+        ]
+        if operator_shell.mode_reason is not None:
+            lines.append(f"downgrade_reason: {operator_shell.mode_reason}")
+        lines.extend(
+            [
+                target_line,
+                f"auto_safe_qualifies_now: {'yes' if gate.allowed else 'no'}",
+                f"summary: {gate.reason}",
+                "conditions:",
+            ]
+        )
+        for condition in gate.conditions:
+            lines.append(f"- {condition.status.value}: {condition.detail}")
+        return "\n".join(lines)
+
     def _prompt(self) -> str:
         mode = (
             self.requested_mode.value
@@ -816,10 +1392,13 @@ class OperatorShell:
                 "/mode [manual|semi-auto|auto-safe]",
                 "/new <payload-path>",
                 "/new --reuse-payload-session <payload-path>",
-                "/resume <session-id>",
+                "/sessions [--limit <n>]",
+                "/resume <session-id|index>",
                 "/status",
                 "/inspect [session|artifacts]",
                 "/audit [--event-type <type>] [--limit <n>]",
+                "/tail [--limit <n>]",
+                "/why-not-auto",
                 "/approve [reason]",
                 "/deny [reason]",
                 "/verify",

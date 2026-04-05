@@ -154,6 +154,8 @@ async def test_inspect_artifacts_json_returns_all_stages_in_fixed_order(
         "hypothesis",
         "recommendation",
         "action_stub",
+        "action_execution",
+        "outcome_verification",
     ]
 
 

@@ -4,16 +4,24 @@
 
 This repository is a production-oriented incident-response runtime prototype. It is designed to
 show how an agent harness can be made verifier-driven, resumable, auditable, and approval-aware
-before adding real execution or broader automation.
+before adding broader automation. The current milestone now includes one narrow live execution path
+for the `deployment-regression` family on a local demo target.
 
 The design borrows mature harness ideas from systems like Claude Code, but it is not a coding
 agent clone. It is an incident-response runtime with narrow, typed, deterministic slices.
+
+For the operator command sequence on top of this architecture, see [Usage Guide](usage.md) and
+[Demo Guide](demo.md).
 
 ## Runtime Lifecycle
 
 The implemented runtime is an explicit incident chain, not a generic workflow engine:
 
 `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+
+For live approved deployment-regression sessions, the chain continues through:
+
+`bounded rollback execution -> outcome verification`
 
 Triage is intentionally bespoke. It establishes the first transcript and checkpoint records from a
 structured incident payload. The downstream slices are resumable continuations built on the shared
@@ -63,7 +71,10 @@ flowchart TD
 
 Implemented chain:
 
-`triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+- replay / pre-approval:
+  `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+- live approved deployment-regression:
+  `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub -> bounded rollback execution -> outcome verification`
 
 Each slice:
 
@@ -72,8 +83,8 @@ Each slice:
 3. runs one verifier
 4. writes the next checkpointed phase
 
-The chain stops at an approval-gated action stub on purpose. The current milestone proves safe
-action candidacy, not real execution.
+The replay path stops at an approval-gated action stub on purpose. The live path only continues for
+one bounded rollback slice after approval is durably recorded.
 
 ## Narrow Chain, Not Generic Orchestration
 
@@ -81,13 +92,16 @@ The runtime surface is intentionally split:
 
 - execution surface:
   the explicit incident chain in `src/agent/incident_*.py`
+- live deployment-regression surface:
+  `src/runtime/live_surface.py` plus `src/runtime/demo_target.py`
 - inspection and export surface:
   `src/runtime/cli.py` plus `src/runtime/inspect.py`
 - replay and demo surface:
   `src/runtime/eval_surface.py` plus `src/evals/incident_chain_replay.py`
 
 There is no generic operator command for arbitrary session creation or loop orchestration. That is
-intentional. The current runtime is a narrow incident-response harness with one well-defined chain.
+intentional. The current runtime is a narrow incident-response harness with one well-defined chain
+plus one explicit live deployment-regression command flow.
 
 ## Four Runtime Layers
 
@@ -254,7 +268,8 @@ The runtime’s safety boundary is explicit:
 - action candidacy is still not execution
 - future non-read-only work remains blocked pending explicit approval design
 
-That is why the runtime ends at an approval-gated action stub instead of moving into remediation.
+That is why the general runtime still ends at an approval-gated action stub and only the live
+deployment-regression path moves into one explicitly bounded rollback.
 
 The action stub is therefore a verified and durable boundary marker, not a hidden placeholder for
 future autonomous execution.
@@ -333,7 +348,7 @@ If the current durable state is insufficient or inconsistent, regeneration retur
 The repository includes replay-style coverage for two deterministic branches:
 
 - supported:
-  `recent_deployment -> deployment_regression -> validate_recent_deployment -> deployment_validation_candidate`
+  `recent_deployment -> deployment_regression -> validate_recent_deployment -> rollback_recent_deployment_candidate`
 - conservative:
   `runbook -> insufficient_evidence -> investigate_more -> no_actionable_stub_yet`
 
@@ -366,7 +381,7 @@ What is complete:
 
 What is intentionally deferred:
 
-- real execution semantics
+- broad execution semantics beyond the one bounded rollback demo
 - project-memory promotion
 - approval UI or reviewer workflow
 - external integrations

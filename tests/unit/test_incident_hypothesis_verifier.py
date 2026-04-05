@@ -52,6 +52,30 @@ def _supported_hypothesis() -> IncidentHypothesisOutput:
     )
 
 
+def _recovered_live_evidence() -> EvidenceReadOutput:
+    return EvidenceReadOutput(
+        incident_id="incident-703",
+        service="payments-api",
+        investigation_target=InvestigationTarget.RECENT_DEPLOYMENT,
+        snapshot_id="live-deployment-2.0.9",
+        evidence_source="http://127.0.0.1:8001/deployment,http://127.0.0.1:8001/health",
+        evidence_summary=(
+            "Live runtime evidence shows deployment 2.0.9 as the current version for "
+            "payments-api; service is healthy."
+        ),
+        observations=[
+            "Deployment endpoint reports current_version 2.0.9 and previous_version 2.0.9.",
+            (
+                "Deployment endpoint reports the rollout as recent and before alert "
+                "triage: bad_release_active=False."
+            ),
+            "Health endpoint reports status=healthy, healthy=True, error_rate=0.01.",
+            "Metrics endpoint reports error_rate=0.01, timeout_rate=0.00, latency_p95_ms=140.",
+        ],
+        recommended_next_read_only_action="Inspect the recovered runtime artifacts.",
+    )
+
+
 @pytest.mark.asyncio
 async def test_incident_hypothesis_verifier_passes_supported_hypothesis() -> None:
     verifier = IncidentHypothesisOutcomeVerifier()
@@ -62,6 +86,50 @@ async def test_incident_hypothesis_verifier_passes_supported_hypothesis() -> Non
         VerifierRequest(
             name=verifier.definition.name,
             target="incident-700",
+            inputs={
+                "branch": HypothesisBranch.BUILD_HYPOTHESIS,
+                "evidence_phase": "evidence_reading_completed",
+                "evidence_verifier_passed": True,
+                "evidence_output": evidence_output.model_dump(mode="json"),
+                "hypothesis_output": hypothesis_output.model_dump(mode="json"),
+            },
+        )
+    )
+
+    assert result.status is VerifierStatus.PASS
+
+
+@pytest.mark.asyncio
+async def test_incident_hypothesis_verifier_passes_recovered_live_no_action_hypothesis(
+) -> None:
+    verifier = IncidentHypothesisOutcomeVerifier()
+    evidence_output = _recovered_live_evidence()
+    hypothesis_output = IncidentHypothesisOutput(
+        incident_id="incident-703",
+        service="payments-api",
+        evidence_snapshot_id="live-deployment-2.0.9",
+        evidence_investigation_target=InvestigationTarget.RECENT_DEPLOYMENT,
+        hypothesis_type=HypothesisType.INSUFFICIENT_EVIDENCE,
+        evidence_supported=False,
+        confidence=HypothesisConfidence.LOW,
+        rationale_summary=(
+            "Live runtime evidence shows payments-api is already healthy on version 2.0.9, "
+            "so the bad deployment is not currently active and a rollback candidate is not "
+            "justified."
+        ),
+        supporting_evidence_fields=["snapshot_id", "evidence_summary", "observations"],
+        unresolved_gaps=[],
+        recommended_next_action=(
+            "Inspect the recovered runtime artifacts and continue monitoring before "
+            "proposing any mitigation."
+        ),
+        more_investigation_required=True,
+    )
+
+    result = await verifier.verify(
+        VerifierRequest(
+            name=verifier.definition.name,
+            target="incident-703",
             inputs={
                 "branch": HypothesisBranch.BUILD_HYPOTHESIS,
                 "evidence_phase": "evidence_reading_completed",

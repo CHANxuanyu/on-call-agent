@@ -1,0 +1,28 @@
+{
+  "approval_state": {
+    "future_preconditions": [],
+    "reason": "Prior artifacts do not yet contain a verified recommendation record.",
+    "requested_action": null,
+    "status": "none",
+    "updated_at": "2026-04-05T14:23:22.372609Z"
+  },
+  "checkpoint_id": "incident-live-deployment-1-20260405142322346236-operator-shell-20260405142447274059",
+  "current_phase": "action_stub_deferred",
+  "current_step": 6,
+  "incident_id": "incident-live-deployment-1",
+  "latest_checkpoint_time": "2026-04-05T14:24:47.274094Z",
+  "operator_shell": {
+    "effective_mode": "auto-safe",
+    "mode_reason": null,
+    "requested_mode": "auto-safe",
+    "updated_at": "2026-04-05T14:24:47.274049Z"
+  },
+  "pending_tool_call": null,
+  "pending_verifier": null,
+  "schema_version": 1,
+  "selected_skills": [
+    "incident-triage"
+  ],
+  "session_id": "incident-live-deployment-1-20260405142322346236",
+  "summary_of_progress": "Action-stub step deferred. Reason: Prior artifacts do not yet contain a verified recommendation record. Verifier status: pass. Operator shell mode: requested=auto-safe, effective=auto-safe."
+}

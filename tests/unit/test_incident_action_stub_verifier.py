@@ -35,8 +35,9 @@ def _supported_recommendation() -> IncidentRecommendationOutput:
         risk_level=RecommendationRiskLevel.MEDIUM,
         required_approval_level=RecommendationApprovalLevel.ONCALL_LEAD,
         preconditions=[
-            "Confirm the deployment diff matches the affected request path.",
-            "Keep all next actions advisory until on-call lead approval is recorded.",
+            "Confirm the currently deployed version still matches the suspected bad release.",
+            "Confirm the previous version is a known-good rollback target.",
+            "Keep all non-read-only actions blocked until on-call lead approval is recorded.",
         ],
         supporting_artifact_refs=[
             "hypothesis:deployment_regression",
@@ -89,7 +90,8 @@ async def test_incident_action_stub_verifier_passes_approval_gated_candidate() -
         action_candidate_type=ActionCandidateType.DEPLOYMENT_VALIDATION_CANDIDATE,
         action_candidate_created=True,
         action_summary=(
-            "Propose a deployment validation candidate for payments-api pending approval."
+            "Propose a rollback to the previous known-good version for payments-api "
+            "pending approval."
         ),
         justification="Deployment evidence supports a regression hypothesis.",
         risk_level=RecommendationRiskLevel.MEDIUM,
@@ -97,7 +99,7 @@ async def test_incident_action_stub_verifier_passes_approval_gated_candidate() -
             "hypothesis:deployment_regression",
             "evidence:deployment-record-2026-04-01",
         ],
-        expected_outcome="An approval-ready deployment validation candidate exists.",
+        expected_outcome="An approval-ready rollback candidate exists for payments-api.",
         safety_notes="Do not execute non-read-only actions from this stub.",
         approval_gate=ApprovalGateOutcome(
             approval_required=True,

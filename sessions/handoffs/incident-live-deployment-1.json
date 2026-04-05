@@ -1,0 +1,105 @@
+{
+  "handoff": {
+    "approval": {
+      "future_preconditions": [
+        "Confirm the currently deployed version still matches the suspected bad release.",
+        "Confirm the previous version is a known-good rollback target.",
+        "Keep all non-read-only actions blocked until on-call lead approval is recorded.",
+        "Human approval must be recorded before any non-read-only action."
+      ],
+      "reason": "rollback recent deployment",
+      "requested_action": "rollback_recent_deployment_candidate",
+      "status": "approved",
+      "summary": "Approval has been recorded. rollback recent deployment"
+    },
+    "compact_handoff_note": "Rollback executed for payments-api from 2.1.0 to 2.0.9. Outcome verification passed with health_status=healthy, error_rate=0.01, timeout_rate=0.00.",
+    "current_operator_attention_point": "Runtime probe sees version 2.0.9, health_status=healthy, error_rate=0.01, timeout_rate=0.00.",
+    "current_phase": "outcome_verification_succeeded",
+    "derived_from": [
+      {
+        "artifact_name": "session_checkpoint",
+        "detail": "incident-live-deployment-1-20260405143637967881-deployment-outcome-verification",
+        "path": "sessions/checkpoints/incident-live-deployment-1-20260405143637967881.json",
+        "source": "checkpoint"
+      },
+      {
+        "artifact_name": "incident_triage_output",
+        "detail": "incident-live-deployment-1",
+        "path": "sessions/transcripts/incident-live-deployment-1-20260405143637967881.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "follow_up_investigation_output",
+        "detail": "recent_deployment",
+        "path": "sessions/transcripts/incident-live-deployment-1-20260405143637967881.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "evidence_read_output",
+        "detail": "live-deployment-2.1.0",
+        "path": "sessions/transcripts/incident-live-deployment-1-20260405143637967881.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "incident_hypothesis_output",
+        "detail": "deployment_regression",
+        "path": "sessions/transcripts/incident-live-deployment-1-20260405143637967881.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "incident_recommendation_output",
+        "detail": "validate_recent_deployment",
+        "path": "sessions/transcripts/incident-live-deployment-1-20260405143637967881.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "incident_action_stub_output",
+        "detail": "rollback_recent_deployment_candidate",
+        "path": "sessions/transcripts/incident-live-deployment-1-20260405143637967881.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "deployment_rollback_execution_output",
+        "detail": "Rolled payments-api back from 2.1.0 to 2.0.9.",
+        "path": "sessions/transcripts/incident-live-deployment-1-20260405143637967881.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "deployment_outcome_probe_output",
+        "detail": "Runtime probe sees version 2.0.9, health_status=healthy, error_rate=0.01, timeout_rate=0.00.",
+        "path": "sessions/transcripts/incident-live-deployment-1-20260405143637967881.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "incident_working_memory",
+        "detail": "outcome_verification_succeeded",
+        "path": "sessions/working_memory/incident-live-deployment-1.json",
+        "source": "incident_working_memory"
+      }
+    ],
+    "important_evidence_references": [
+      "hypothesis:deployment_regression",
+      "evidence:live-deployment-2.1.0",
+      "field:snapshot_id",
+      "field:evidence_summary",
+      "field:observations",
+      "http://127.0.0.1:8001/deployment,http://127.0.0.1:8001/health,http://127.0.0.1:8001/metrics",
+      "investigation_target:recent_deployment",
+      "rollback:2.1.0->2.0.9",
+      "http://127.0.0.1:8001",
+      "http://127.0.0.1:8001/deployment",
+      "http://127.0.0.1:8001/health",
+      "http://127.0.0.1:8001/metrics"
+    ],
+    "incident_id": "incident-live-deployment-1",
+    "leading_hypothesis_summary": "Evidence from live-deployment-2.1.0 supports a recent deployment regression affecting payments-api.",
+    "progress_summary": "Outcome verification probed version 2.0.9 with health_status=healthy. Verifier status: pass.",
+    "recommendation_summary": "Validate rollback readiness for the recent deployment on payments-api and prepare an approval review if rollback preconditions hold.",
+    "service": "payments-api",
+    "unresolved_gaps": []
+  },
+  "schema_version": 1,
+  "source_checkpoint_id": "incident-live-deployment-1-20260405143637967881-deployment-outcome-verification",
+  "source_checkpoint_time": "2026-04-05T14:37:49.531664Z",
+  "source_session_id": "incident-live-deployment-1-20260405143637967881"
+}

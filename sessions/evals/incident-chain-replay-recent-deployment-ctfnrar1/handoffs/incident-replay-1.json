@@ -1,0 +1,90 @@
+{
+  "handoff": {
+    "approval": {
+      "future_preconditions": [
+        "Confirm the currently deployed version still matches the suspected bad release.",
+        "Confirm the previous version is a known-good rollback target.",
+        "Keep all non-read-only actions blocked until on-call lead approval is recorded.",
+        "Human approval must be recorded before any non-read-only action."
+      ],
+      "reason": "The proposed candidate could lead to non-read-only mitigation work and must remain blocked pending on-call lead approval.",
+      "requested_action": "rollback_recent_deployment_candidate",
+      "status": "pending",
+      "summary": "Pending approval for rollback_recent_deployment_candidate. The proposed candidate could lead to non-read-only mitigation work and must remain blocked pending on-call lead approval."
+    },
+    "compact_handoff_note": "Current phase is action_stub_pending_approval. Action-stub step produced rollback_recent_deployment_candidate for payments-api. Verifier status: pass. Leading hypothesis: Evidence from deployment-record-2026-04-01 supports a recent deployment regression affecting payments-api. Recommendation: Prepare a rollback of the recent deployment for payments-api if approval and rollback preconditions are satisfied. Pending approval for rollback_recent_deployment_candidate. The proposed candidate could lead to non-read-only mitigation work and must remain blocked pending on-call lead approval. Current operator attention point: Review the approval gate for rollback_recent_deployment_candidate and confirm the recorded future preconditions still hold.",
+    "current_operator_attention_point": "Review the approval gate for rollback_recent_deployment_candidate and confirm the recorded future preconditions still hold.",
+    "current_phase": "action_stub_pending_approval",
+    "derived_from": [
+      {
+        "artifact_name": "session_checkpoint",
+        "detail": "incident-chain-replay-recent-deployment-session-incident-action-stub",
+        "path": "/home/chan/projects/on-call-agent/sessions/evals/incident-chain-replay-recent-deployment-ctfnrar1/checkpoints/incident-chain-replay-recent-deployment-session.json",
+        "source": "checkpoint"
+      },
+      {
+        "artifact_name": "incident_triage_output",
+        "detail": "incident-replay-1",
+        "path": "/home/chan/projects/on-call-agent/sessions/evals/incident-chain-replay-recent-deployment-ctfnrar1/transcripts/incident-chain-replay-recent-deployment-session.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "follow_up_investigation_output",
+        "detail": "recent_deployment",
+        "path": "/home/chan/projects/on-call-agent/sessions/evals/incident-chain-replay-recent-deployment-ctfnrar1/transcripts/incident-chain-replay-recent-deployment-session.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "evidence_read_output",
+        "detail": "deployment-record-2026-04-01",
+        "path": "/home/chan/projects/on-call-agent/sessions/evals/incident-chain-replay-recent-deployment-ctfnrar1/transcripts/incident-chain-replay-recent-deployment-session.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "incident_hypothesis_output",
+        "detail": "deployment_regression",
+        "path": "/home/chan/projects/on-call-agent/sessions/evals/incident-chain-replay-recent-deployment-ctfnrar1/transcripts/incident-chain-replay-recent-deployment-session.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "incident_recommendation_output",
+        "detail": "validate_recent_deployment",
+        "path": "/home/chan/projects/on-call-agent/sessions/evals/incident-chain-replay-recent-deployment-ctfnrar1/transcripts/incident-chain-replay-recent-deployment-session.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "incident_action_stub_output",
+        "detail": "rollback_recent_deployment_candidate",
+        "path": "/home/chan/projects/on-call-agent/sessions/evals/incident-chain-replay-recent-deployment-ctfnrar1/transcripts/incident-chain-replay-recent-deployment-session.jsonl",
+        "source": "verified_transcript_artifact"
+      },
+      {
+        "artifact_name": "incident_working_memory",
+        "detail": "recommendation_supported",
+        "path": "/home/chan/projects/on-call-agent/sessions/evals/incident-chain-replay-recent-deployment-ctfnrar1/working_memory/incident-replay-1.json",
+        "source": "incident_working_memory"
+      }
+    ],
+    "important_evidence_references": [
+      "hypothesis:deployment_regression",
+      "evidence:deployment-record-2026-04-01",
+      "field:snapshot_id",
+      "field:evidence_summary",
+      "field:observations",
+      "evals/fixtures/evidence_snapshots.json::recent_deployment",
+      "investigation_target:recent_deployment"
+    ],
+    "incident_id": "incident-replay-1",
+    "leading_hypothesis_summary": "Evidence from deployment-record-2026-04-01 supports a recent deployment regression affecting payments-api.",
+    "progress_summary": "Action-stub step produced rollback_recent_deployment_candidate for payments-api. Verifier status: pass.",
+    "recommendation_summary": "Prepare a rollback of the recent deployment for payments-api if approval and rollback preconditions are satisfied.",
+    "service": "payments-api",
+    "unresolved_gaps": [
+      "Need rollback or mitigation confirmation before treating the regression as validated."
+    ]
+  },
+  "schema_version": 1,
+  "source_checkpoint_id": "incident-chain-replay-recent-deployment-session-incident-action-stub",
+  "source_checkpoint_time": "2026-04-04T21:15:11.413481Z",
+  "source_session_id": "incident-chain-replay-recent-deployment-session"
+}

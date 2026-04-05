@@ -1,0 +1,33 @@
+{
+  "approval_state": {
+    "future_preconditions": [
+      "Confirm the currently deployed version still matches the suspected bad release.",
+      "Confirm the previous version is a known-good rollback target.",
+      "Keep all non-read-only actions blocked until on-call lead approval is recorded.",
+      "Human approval must be recorded before any non-read-only action."
+    ],
+    "reason": "The proposed candidate could lead to non-read-only mitigation work and must remain blocked pending on-call lead approval.",
+    "requested_action": "rollback_recent_deployment_candidate",
+    "status": "pending",
+    "updated_at": "2026-04-05T13:46:57.342026Z"
+  },
+  "checkpoint_id": "session-live-deployment-1-incident-action-stub",
+  "current_phase": "action_stub_pending_approval",
+  "current_step": 6,
+  "incident_id": "incident-live-deployment-1",
+  "latest_checkpoint_time": "2026-04-05T13:46:57.342035Z",
+  "operator_shell": {
+    "effective_mode": "semi-auto",
+    "mode_reason": null,
+    "requested_mode": "semi-auto",
+    "updated_at": "2026-04-05T13:46:57.299785Z"
+  },
+  "pending_tool_call": null,
+  "pending_verifier": null,
+  "schema_version": 1,
+  "selected_skills": [
+    "incident-triage"
+  ],
+  "session_id": "session-live-deployment-1",
+  "summary_of_progress": "Action-stub step produced rollback_recent_deployment_candidate for payments-api. Verifier status: pass."
+}
