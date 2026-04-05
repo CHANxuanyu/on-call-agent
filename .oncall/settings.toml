@@ -1,0 +1,6 @@
+[shell]
+default_mode = "manual"
+
+[autonomy.auto_safe]
+enabled = false
+allowed_base_urls = ["http://127.0.0.1:8001"]

@@ -11,6 +11,7 @@ from context.handoff_regeneration import (
 from memory.checkpoints import (
     ApprovalState,
     ApprovalStatus,
+    OperatorAutonomyMode,
     PendingVerifier,
     SessionCheckpoint,
 )
@@ -350,3 +351,23 @@ def test_export_handoff_maps_exit_codes(
     assert exit_code == expected_exit
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == status.value
+
+
+def test_shell_command_invokes_operator_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeShell:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def run(self) -> int:
+            return 17
+
+    monkeypatch.setattr("runtime.cli.OperatorShell", _FakeShell)
+
+    exit_code = main(["shell", "--mode", "semi-auto"])
+
+    assert exit_code == 17
+    assert captured["initial_mode"] is OperatorAutonomyMode.SEMI_AUTO

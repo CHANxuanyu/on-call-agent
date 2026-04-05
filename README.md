@@ -2,15 +2,20 @@
 
 Python runtime prototype for a narrow incident-response workflow built around verifier-driven state
 transitions, append-only transcripts, resumable checkpoints, and approval-aware boundaries. This
-repository is not a generic agent demo, not a coding agent, and not an autonomous remediation
-system. It is a harness-first milestone that shows how to make incident-oriented agent behavior
-durable, inspectable, replayable, and safe before adding broader automation.
+repository is not a generic agent demo, not a coding agent, and not a broad autonomous remediation
+system. It is a harness-first milestone that now includes one honest live closed loop for the
+`deployment-regression` incident family on a local demo target while keeping the broader system
+deliberately narrow, inspectable, replayable, and safe.
 
 ## What This Repository Is
 
 This repository implements one explicit incident chain:
 
 `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+
+For the live `deployment-regression` family, the approved branch continues through:
+
+`bounded rollback execution -> outcome verification`
 
 It is intentionally narrow. The point is to show reliable runtime behavior for incident handling,
 not broad planner behavior.
@@ -29,10 +34,15 @@ The durable-state seams are explicit:
 
 The main operator-facing surfaces are the CLI commands:
 
+- `shell`
 - `inspect-session`
 - `inspect-artifacts`
 - `show-audit`
 - `export-handoff`
+- `start-incident`
+- `resolve-approval`
+- `verify-outcome`
+- `run-demo-target`
 - `list-evals`
 - `run-eval`
 
@@ -47,18 +57,20 @@ artifacts matters more than demo breadth:
 - producing one verifier-backed hypothesis
 - producing one verifier-backed recommendation
 - surfacing one approval-gated action candidate stub
+- executing one explicit approval-gated rollback against the local demo target
+- verifying live post-action runtime state through external endpoint probes
 - generating operator-facing handoff artifacts from durable runtime state
 
 ## What It Is Not For
 
 This repository does not implement:
 
-- real remediation or mutation of external systems
+- broad remediation or mutation of arbitrary external systems
 - a generic planner or open-ended autonomous loop
 - a coding-agent product surface like Claude Code
 - multi-agent orchestration
 - approval UI or reviewer workflow integration
-- external service integrations or production deployment infrastructure
+- production deployment infrastructure or third-party ops integrations
 
 ## Why This Is Not A Generic Agent Demo
 
@@ -121,17 +133,75 @@ Expected outcome:
 - `approval_status: pending`
 - transcript and checkpoint paths for the replayed session
 
+Run the live closed-loop deployment-regression demo target in a separate shell:
+
+```bash
+oncall-agent run-demo-target --port 8001
+```
+
+Use the interactive operator shell as the primary operator surface:
+
+```bash
+oncall-agent shell
+```
+
+Example shell flow:
+
+```text
+/mode semi-auto
+/new docs/examples/deployment_regression_payload.json
+/approve Rollback approved for the live demo target.
+/handoff
+/exit
+```
+
+`manual`, `semi-auto`, and `auto-safe` are first-class shell modes. `auto-safe` is fail-closed:
+the repository-local `.oncall/settings.toml` defaults to `enabled = false`, and auto execution
+only occurs for the existing bounded deployment-regression rollback when the policy is enabled and
+the exact base URL is allowlisted. Otherwise the shell degrades the session to `semi-auto` and
+records the reason durably in checkpoint state.
+
+Start a live incident session from [deployment_regression_payload.json](docs/examples/deployment_regression_payload.json):
+
+```bash
+oncall-agent start-incident \
+  --family deployment-regression \
+  --payload docs/examples/deployment_regression_payload.json \
+  --json
+```
+
+Approve the bounded rollback candidate and let the runtime execute the rollback plus outcome probe:
+
+```bash
+oncall-agent resolve-approval <session_id> --decision approve --json
+```
+
+Expected live-path outcome:
+
+- `current_phase: outcome_verification_succeeded`
+- `approval_status: approved`
+- the action execution and outcome verification stages are verifier-backed and inspectable
+
 For local verification without installing the console script, the same commands also work via:
 
 ```bash
 .venv/bin/python -m runtime.cli <command> ...
 ```
 
+If you omit `--output-root` on `run-eval`, the CLI writes replay artifacts under
+`sessions/evals/`.
+
 ## Runtime Spine
 
 Current implemented chain:
 
+Replay and pre-approval path:
+
 `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+
+Live approved path for `deployment-regression`:
+
+`triage -> follow-up -> live evidence -> hypothesis -> recommendation -> approval-gated action stub -> bounded rollback execution -> outcome verification`
 
 Each slice is narrow and explicit.
 
@@ -151,9 +221,15 @@ Each slice is narrow and explicit.
 6. `IncidentActionStubStep`
    Consumes one verified recommendation and produces exactly one approval-aware action candidate
    stub or one explicit conservative no-actionable outcome.
+7. `DeploymentRollbackExecutionStep`
+   Consumes one approved rollback candidate and executes exactly one bounded rollback against the
+   local demo target.
+8. `DeploymentOutcomeVerificationStep`
+   Probes live deployment, health, and metrics endpoints after rollback and verifies whether the
+   target recovered.
 
-The chain stops there intentionally. It proves action candidacy and approval state without
-executing real write actions.
+The replay path still stops at the approval-gated action stub. The live path continues only for the
+single deployment-regression family and only after explicit approval is durably recorded.
 
 ## Runtime Infrastructure
 
@@ -162,6 +238,7 @@ executing real write actions.
 - file-based skills under `skills/<skill>/SKILL.md`
 - typed tools, verifier results, transcript events, and checkpoints
 - deterministic local fixtures for replayable evidence
+- one local demo target with live health, deployment, metrics, rollback, and post-action probes
 
 ### Execution Truth
 
@@ -194,11 +271,13 @@ This runtime is deliberately conservative.
 - Read-only steps can proceed when policy allows them.
 - Stronger evidence can justify a structured action candidate.
 - A candidate is still not execution.
-- Any future non-read-only action remains outside scope until approval and execution semantics are
-  designed explicitly.
+- The one implemented non-read-only action is a bounded rollback against the local demo target and
+  only runs after approval is explicitly recorded.
+- Broader non-read-only actions remain outside scope until they have equally explicit approval and
+  verification semantics.
 
-That is why the runtime ends at an approval-gated action stub rather than continuing into
-remediation.
+That is why the replay path ends at the action stub while the live path continues only for one
+explicitly bounded rollback slice.
 
 ## Replay / Eval Story
 
@@ -207,7 +286,7 @@ The repo includes replay-style coverage over fixed fixtures, not a generic bench
 Implemented branches:
 
 - supported branch:
-  `recent_deployment -> deployment_regression -> validate_recent_deployment -> deployment_validation_candidate`
+  `recent_deployment -> deployment_regression -> validate_recent_deployment -> rollback_recent_deployment_candidate`
 - conservative branch:
   `runbook -> insufficient_evidence -> investigate_more -> no_actionable_stub_yet`
 
@@ -235,13 +314,21 @@ Inspection and export surface:
 - `oncall-agent show-audit <session_id>`
 - `oncall-agent export-handoff <session_id>`
 
+Live deployment-regression surface:
+
+- `oncall-agent run-demo-target`
+- `oncall-agent start-incident --family deployment-regression --payload <file>`
+- `oncall-agent resolve-approval <session_id> --decision approve|deny`
+- `oncall-agent verify-outcome <session_id>`
+
 Replay and demo surface:
 
 - `oncall-agent list-evals`
 - `oncall-agent run-eval <eval_name>`
 
-The CLI does not create or resume arbitrary operator sessions. It exposes inspection,
-artifact-export, and replay/demo flows on top of the current narrow runtime.
+The CLI still does not create arbitrary generic agent sessions. It now exposes one explicit live
+operator workflow for the deployment-regression family, plus one interactive shell over that same
+narrow runtime.
 
 ## Handoff Artifact Capability
 
@@ -265,7 +352,7 @@ The handoff artifact is derived output only. It is not part of the control plane
 
 ## Intentionally Out Of Scope
 
-- real execution or remediation
+- broad unbounded execution or remediation
 - human approval UI
 - project-memory promotion
 - background extraction or compaction systems
@@ -361,6 +448,7 @@ What is intentionally deferred:
 
 ## Additional Docs
 
+- [Usage Guide](docs/usage.md)
 - [Architecture Summary](docs/architecture.md)
 - [Demo Guide](docs/demo.md)
 - [Resume Framing](docs/resume.md)

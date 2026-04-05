@@ -8,7 +8,12 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.state import AgentStatus
-from memory.checkpoints import JsonCheckpointStore, PendingVerifier, SessionCheckpoint
+from memory.checkpoints import (
+    JsonCheckpointStore,
+    OperatorShellState,
+    PendingVerifier,
+    SessionCheckpoint,
+)
 from permissions.models import PermissionAction, PermissionDecision
 from permissions.policy import PermissionPolicy
 from skills.loader import SkillLoader
@@ -35,6 +40,7 @@ class IncidentTriageStepRequest(IncidentTriageInput):
     """Structured input accepted by the first triage step."""
 
     session_id: str = Field(min_length=1)
+    operator_shell: OperatorShellState = Field(default_factory=OperatorShellState)
 
 
 class IncidentTriageStepResult(BaseModel):
@@ -90,7 +96,10 @@ class IncidentTriageStep:
 
         tool_call = ToolCall(
             name=self.tool.definition.name,
-            arguments=request.model_dump(mode="json", exclude={"session_id"}),
+            arguments=request.model_dump(
+                mode="json",
+                exclude={"session_id", "operator_shell"},
+            ),
         )
         permission_decision = self.permission_policy.decide(
             self.tool.definition,
@@ -155,6 +164,7 @@ class IncidentTriageStep:
             current_step=1,
             selected_skills=[skill.metadata.name],
             pending_verifier=self._pending_verifier(verifier_request, verifier_result.status),
+            operator_shell=request.operator_shell,
             summary_of_progress=self._progress_summary(
                 request=request,
                 triage_output=triage_output,

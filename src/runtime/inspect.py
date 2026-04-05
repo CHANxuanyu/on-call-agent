@@ -66,6 +66,7 @@ def build_session_payload(artifact_context: SessionArtifactContext) -> dict[str,
         "latest_checkpoint_time": checkpoint.latest_checkpoint_time.isoformat(),
         "selected_skills": list(checkpoint.selected_skills),
         "approval_state": checkpoint.approval_state.model_dump(mode="json"),
+        "operator_shell": checkpoint.operator_shell.model_dump(mode="json"),
         "pending_verifier": (
             checkpoint.pending_verifier.model_dump(mode="json")
             if checkpoint.pending_verifier is not None
@@ -83,6 +84,7 @@ def render_session_payload(payload: dict[str, Any]) -> str:
     """Render a compact human-readable session summary."""
 
     approval_state = payload["approval_state"]
+    operator_shell = payload["operator_shell"]
     pending_verifier = payload["pending_verifier"]
     lines = [
         f"session_id: {payload['session_id']}",
@@ -94,6 +96,9 @@ def render_session_payload(payload: dict[str, Any]) -> str:
         f"latest_checkpoint_time: {payload['latest_checkpoint_time']}",
         f"selected_skills: {', '.join(payload['selected_skills']) or 'none'}",
         f"approval_status: {approval_state['status']}",
+        "operator_mode: "
+        f"requested={operator_shell['requested_mode']} "
+        f"effective={operator_shell['effective_mode']}",
         f"pending_verifier: "
         f"{pending_verifier['verifier_name'] if pending_verifier is not None else 'none'}",
         f"transcript_event_count: {payload['transcript_event_count']}",
@@ -102,6 +107,8 @@ def render_session_payload(payload: dict[str, Any]) -> str:
         f"transcript_path: {payload['transcript_path']}",
         f"working_memory_path: {payload['working_memory_path']}",
     ]
+    if operator_shell["mode_reason"] is not None:
+        lines.insert(9, f"operator_mode_reason: {operator_shell['mode_reason']}")
     return "\n".join(lines)
 
 

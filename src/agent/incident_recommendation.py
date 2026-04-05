@@ -26,6 +26,7 @@ from runtime.harness import (
 from runtime.models import SyntheticFailure
 from tools.implementations.incident_hypothesis import IncidentHypothesisOutput
 from tools.implementations.incident_recommendation import (
+    ALREADY_HEALTHY_ON_KNOWN_GOOD_REF,
     IncidentRecommendationBuilderTool,
     IncidentRecommendationOutput,
     RecommendationApprovalLevel,
@@ -210,6 +211,7 @@ class IncidentRecommendationStep:
                 verifier_request=verifier_request,
                 verifier_status=verifier_result.status,
             ),
+            operator_shell=context.artifact_context.checkpoint.operator_shell,
             summary_of_progress=self._progress_summary(
                 branch=branch,
                 recommendation_output=recommendation_output,
@@ -380,6 +382,13 @@ class IncidentRecommendationStep:
                 "Recommendation step did not produce a structured recommendation. "
                 f"Verifier status: {verifier_result.status}."
             )
+        if ALREADY_HEALTHY_ON_KNOWN_GOOD_REF in recommendation_output.supporting_artifact_refs:
+            return (
+                "Recommendation step kept the incident non-actionable because live "
+                f"evidence already shows {recommendation_output.service} healthy on the "
+                "known-good version. "
+                f"Verifier status: {verifier_result.status}."
+            )
         return (
             f"Recommendation step produced {recommendation_output.recommendation_type} for "
             f"{recommendation_output.service}. Verifier status: {verifier_result.status}."
@@ -476,6 +485,12 @@ class IncidentRecommendationStep:
         hypothesis_output: IncidentHypothesisOutput,
         recommendation_output: IncidentRecommendationOutput,
     ) -> str:
+        if ALREADY_HEALTHY_ON_KNOWN_GOOD_REF in recommendation_output.supporting_artifact_refs:
+            return (
+                f"Live evidence shows {hypothesis_output.service} already healthy on the "
+                "known-good version. Current recommendation keeps the session "
+                "non-actionable and does not justify a rollback candidate."
+            )
         approval_note = (
             "Future non-read-only work remains approval-gated."
             if recommendation_requires_approval(recommendation_output)

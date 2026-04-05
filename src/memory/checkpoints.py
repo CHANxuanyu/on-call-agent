@@ -22,6 +22,14 @@ class ApprovalStatus(StrEnum):
     DENIED = "denied"
 
 
+class OperatorAutonomyMode(StrEnum):
+    """Narrow operator shell autonomy modes for the incident runtime."""
+
+    MANUAL = "manual"
+    SEMI_AUTO = "semi-auto"
+    AUTO_SAFE = "auto-safe"
+
+
 class ApprovalState(BaseModel):
     """Current approval state for the session."""
 
@@ -31,6 +39,17 @@ class ApprovalState(BaseModel):
     requested_action: str | None = None
     reason: str | None = None
     future_preconditions: list[str] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class OperatorShellState(BaseModel):
+    """Durable operator shell state stored alongside the current checkpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    requested_mode: OperatorAutonomyMode = OperatorAutonomyMode.MANUAL
+    effective_mode: OperatorAutonomyMode = OperatorAutonomyMode.MANUAL
+    mode_reason: str | None = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -70,6 +89,7 @@ class SessionCheckpoint(BaseModel):
     pending_tool_call: ToolCall | None = None
     pending_verifier: PendingVerifier | None = None
     approval_state: ApprovalState = Field(default_factory=ApprovalState)
+    operator_shell: OperatorShellState = Field(default_factory=OperatorShellState)
     latest_checkpoint_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     summary_of_progress: str = Field(min_length=1)
 

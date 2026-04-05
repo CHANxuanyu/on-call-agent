@@ -193,6 +193,7 @@ class DeploymentRollbackExecutionStep:
                 verifier_status=verifier_result.status,
             ),
             approval_state=context.artifact_context.checkpoint.approval_state,
+            operator_shell=context.artifact_context.checkpoint.operator_shell,
             summary_of_progress=self._progress_summary(
                 branch=branch,
                 execution_output=execution_output,

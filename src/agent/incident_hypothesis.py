@@ -199,6 +199,7 @@ class IncidentHypothesisStep:
                 verifier_request=verifier_request,
                 verifier_status=verifier_result.status,
             ),
+            operator_shell=context.artifact_context.checkpoint.operator_shell,
             summary_of_progress=self._progress_summary(
                 branch=branch,
                 evidence_output=evidence_output,

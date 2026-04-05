@@ -23,6 +23,7 @@ from tools.implementations.follow_up_investigation import (
     FollowUpInvestigationOutput,
     InvestigationTarget,
 )
+from tools.implementations.incident_triage import IncidentTriageInput
 from tools.models import ToolCall, ToolResult
 from verifiers.base import VerifierRequest, VerifierResult, VerifierStatus
 from verifiers.implementations.evidence_reading import (
@@ -83,6 +84,7 @@ class _EvidenceResumeContext:
     harness: ResumableSliceHarness
     artifact_context: SessionArtifactContext
     follow_up_output: FollowUpInvestigationOutput | None
+    triage_input: IncidentTriageInput | None
     follow_up_verifier_passed: bool
     follow_up_failure: SyntheticFailure | None = None
     follow_up_insufficiency_reason: str | None = None
@@ -128,7 +130,12 @@ class IncidentEvidenceStep:
             tool_call = ToolCall(
                 name=self.tool.definition.name,
                 arguments={
-                    "investigation_output": context.follow_up_output.model_dump(mode="json")
+                    "investigation_output": context.follow_up_output.model_dump(mode="json"),
+                    "triage_input": (
+                        context.triage_input.model_dump(mode="json")
+                        if context.triage_input is not None
+                        else None
+                    ),
                 },
             )
             tool_outcome = await harness.execute_read_only_tool(
@@ -193,6 +200,7 @@ class IncidentEvidenceStep:
                 verifier_request=verifier_request,
                 verifier_status=verifier_result.status,
             ),
+            operator_shell=context.artifact_context.checkpoint.operator_shell,
             summary_of_progress=self._progress_summary(
                 branch=branch,
                 selected_target=selected_target,
@@ -257,6 +265,7 @@ class IncidentEvidenceStep:
             harness=harness,
             artifact_context=artifact_context,
             follow_up_output=follow_up_resolution.artifact,
+            triage_input=artifact_context.latest_triage_input(),
             follow_up_verifier_passed=follow_up_record.verifier_status is VerifierStatus.PASS,
             follow_up_failure=follow_up_resolution.failure,
             follow_up_insufficiency_reason=follow_up_resolution.reason,
@@ -281,9 +290,18 @@ class IncidentEvidenceStep:
         selected_target: InvestigationTarget | None,
     ) -> str:
         if branch is EvidenceReadBranch.READ_EVIDENCE:
+            evidence_source = (
+                "live runtime endpoints"
+                if (
+                    context.triage_input is not None
+                    and context.triage_input.service_base_url is not None
+                    and selected_target is InvestigationTarget.RECENT_DEPLOYMENT
+                )
+                else "deterministic local fixtures"
+            )
             return (
                 f"Resume recovered selected target {selected_target} from follow-up artifacts and "
-                "will read one deterministic local evidence bundle."
+                f"will read one {evidence_source} evidence bundle."
             )
         if context.follow_up_failure is not None:
             return (

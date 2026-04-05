@@ -3,9 +3,14 @@
 This is a 5-minute CLI walkthrough for the current runtime. It uses the existing operator-facing
 surface rather than pytest entrypoints so the demo matches what a reviewer can actually run.
 
+For a shorter command reference, see [Usage Guide](usage.md).
+
 Runtime shape:
 
-`triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+- replay / pre-approval path:
+  `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+- live approved deployment-regression path:
+  `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub -> bounded rollback execution -> outcome verification`
 
 ## Setup
 
@@ -19,7 +24,72 @@ If you have not installed the console script yet, you can substitute:
 .venv/bin/python -m runtime.cli <command> ...
 ```
 
-## 1. List The Available Replay Scenarios
+## 1. Run The Live Deployment-Regression Demo
+
+Start the local demo target in a separate terminal:
+
+```bash
+oncall-agent run-demo-target --port 8001
+```
+
+Start the live incident using the example payload:
+
+```bash
+oncall-agent start-incident \
+  --family deployment-regression \
+  --payload docs/examples/deployment_regression_payload.json \
+  --json
+```
+
+You can drive the same flow from one operator shell:
+
+```bash
+oncall-agent shell
+```
+
+Example shell transcript:
+
+```text
+/mode semi-auto
+/new docs/examples/deployment_regression_payload.json
+/status
+/approve Rollback approved for the live demo target.
+/handoff
+/exit
+```
+
+`auto-safe` is also available in the shell, but it is fail-closed by default. It only auto-runs
+the bounded rollback when `.oncall/settings.toml` enables the policy and the exact live target
+base URL is allowlisted. If those checks do not pass, the session degrades to `semi-auto` and the
+downgrade reason is written durably into checkpoint state.
+
+Expected output highlights:
+
+- `"current_phase": "action_stub_pending_approval"`
+- `"approval_state": {"status": "pending", ...}`
+- live evidence came from `/deployment`, `/health`, and `/metrics`
+
+Approve the rollback candidate:
+
+```bash
+oncall-agent resolve-approval <session_id> --decision approve --json
+```
+
+Expected output highlights:
+
+- `"current_phase": "outcome_verification_succeeded"`
+- `"approval_state": {"status": "approved", ...}`
+- the runtime executed one bounded rollback and then verified live recovery
+
+Optional rerun:
+
+```bash
+oncall-agent verify-outcome <session_id> --json
+```
+
+This is the narrow demo-grade ops-agent path in the repository today.
+
+## 2. List The Available Replay Scenarios
 
 ```bash
 oncall-agent list-evals
@@ -33,7 +103,7 @@ Expected output:
 These are the canonical built-in names shown by the CLI. The built-in underscore aliases are still
 accepted by `run-eval`, but the demo should use the canonical hyphenated names.
 
-## 2. Run One Supported Scenario
+## 3. Run One Supported Replay Scenario
 
 ```bash
 oncall-agent run-eval incident-chain-replay-recent-deployment --output-root /tmp/oncall-agent-demo
@@ -52,9 +122,10 @@ What this proves:
 - the replay output includes enough durable state for later inspection and handoff export
 
 This command writes a unique replay directory under `/tmp/oncall-agent-demo`. In the examples
-below, replace `<run-dir>` with the generated path printed in `output_root`.
+below, replace `<run-dir>` with the generated path printed in `output_root`. If you prefer a
+machine-readable run summary, use `--json` on `run-eval`.
 
-## 3. Inspect The Resulting Session
+## 4. Inspect The Resulting Session
 
 ```bash
 oncall-agent inspect-session incident-chain-replay-recent-deployment-session \
@@ -71,7 +142,7 @@ Expected output highlights:
 
 This confirms the replay ended at the approval boundary rather than attempting execution.
 
-## 4. Inspect The Artifact Chain
+## 5. Inspect The Artifact Chain
 
 ```bash
 oncall-agent inspect-artifacts incident-chain-replay-recent-deployment-session \
@@ -88,10 +159,14 @@ Expected output highlights:
 - `hypothesis: verified`
 - `recommendation: verified`
 - `action_stub: verified`
+- `action_execution: insufficient`
+- `outcome_verification: insufficient`
 
 This is the fastest way to show verifier-backed progression through the whole implemented chain.
 
-## 5. Show A Compact Audit Trail
+For live approved sessions, `action_execution` and `outcome_verification` become `verified`.
+
+## 6. Show A Compact Audit Trail
 
 ```bash
 oncall-agent show-audit incident-chain-replay-recent-deployment-session \
@@ -111,7 +186,7 @@ Expected output:
 This is the operator-facing proof that the chain’s later phases were verifier-backed, not just
 model-generated.
 
-## 6. Export The Handoff Artifact
+## 7. Export The Handoff Artifact
 
 ```bash
 oncall-agent export-handoff incident-chain-replay-recent-deployment-session \
@@ -131,7 +206,7 @@ This shows the current export path:
 
 `SessionArtifactContext -> IncidentHandoffContextAssembler -> IncidentHandoffArtifactWriter`
 
-## Optional Conservative-Branch Demo
+## Optional Conservative-Branch Replay Demo
 
 Run:
 
@@ -152,6 +227,10 @@ not justify a stronger action candidate.
 
 - replay runner: `src/evals/incident_chain_replay.py`
 - CLI surface: `src/runtime/cli.py`
+- live incident surface: `src/runtime/live_surface.py`
+- demo target: `src/runtime/demo_target.py`
+- rollback execution step: `src/agent/deployment_rollback_execution.py`
+- outcome verification step: `src/agent/deployment_outcome_verification.py`
 - session reconstruction seam: `src/context/session_artifacts.py`
 - handoff assembly: `src/context/handoff.py`
 - handoff regeneration: `src/context/handoff_regeneration.py`

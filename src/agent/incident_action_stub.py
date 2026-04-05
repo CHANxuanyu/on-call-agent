@@ -216,6 +216,7 @@ class IncidentActionStubStep:
                 artifact_failure,
                 insufficiency_reason,
             ),
+            operator_shell=context.artifact_context.checkpoint.operator_shell,
             summary_of_progress=self._progress_summary(
                 branch=branch,
                 action_stub_output=action_stub_output,
@@ -415,6 +416,12 @@ class IncidentActionStubStep:
         if action_stub_output is None:
             return (
                 "Action-stub step did not produce a structured action stub. "
+                f"Verifier status: {verifier_result.status}."
+            )
+        if not action_stub_output.action_candidate_created:
+            return (
+                "Action-stub step recorded a conservative no-action outcome for "
+                f"{action_stub_output.service}: {action_stub_output.action_summary} "
                 f"Verifier status: {verifier_result.status}."
             )
         return (

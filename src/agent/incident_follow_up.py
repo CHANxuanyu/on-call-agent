@@ -214,6 +214,7 @@ class IncidentFollowUpStep:
             current_step=step_index,
             selected_skills=context.artifact_context.checkpoint.selected_skills,
             pending_verifier=self._pending_verifier(verifier_request, verifier_result.status),
+            operator_shell=context.artifact_context.checkpoint.operator_shell,
             summary_of_progress=self._progress_summary(
                 branch=branch,
                 triage_output=triage_output,
