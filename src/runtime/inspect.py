@@ -19,6 +19,7 @@ from context.session_artifacts import (
     SessionArtifactContext,
 )
 from transcripts.models import (
+    ApprovalResolvedEvent,
     CheckpointWrittenEvent,
     ModelStepEvent,
     PermissionDecisionEvent,
@@ -306,6 +307,16 @@ def _artifact_stage_loaders() -> tuple[
             SessionArtifactContext.latest_action_stub_output,
             SessionArtifactContext.latest_verified_action_stub_output,
         ),
+        (
+            "action_execution",
+            SessionArtifactContext.latest_action_execution_output,
+            SessionArtifactContext.latest_verified_action_execution_output,
+        ),
+        (
+            "outcome_verification",
+            SessionArtifactContext.latest_outcome_verification_output,
+            SessionArtifactContext.latest_verified_outcome_verification_output,
+        ),
     )
 
 
@@ -361,6 +372,11 @@ def _audit_event_summary(event: TranscriptEvent) -> str:
     if isinstance(event, ToolResultEvent):
         return f"tool {event.tool_name} returned {event.result.status.value}"
     if isinstance(event, PermissionDecisionEvent):
+        if event.decision.action.value == "ask":
+            return (
+                f"permission ask for {event.decision.tool_name}: "
+                f"{event.decision.reason}"
+            )
         return (
             f"permission {event.decision.action.value} for {event.decision.tool_name}"
         )
@@ -372,4 +388,9 @@ def _audit_event_summary(event: TranscriptEvent) -> str:
         return f"wrote checkpoint {event.checkpoint_id}"
     if isinstance(event, ResumeStartedEvent):
         return f"resumed from checkpoint {event.checkpoint_id}: {event.reason}"
+    if isinstance(event, ApprovalResolvedEvent):
+        return (
+            f"approval {event.decision} for {event.requested_action}"
+            + (f": {event.reason}" if event.reason is not None else "")
+        )
     return event.event_type

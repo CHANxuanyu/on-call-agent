@@ -3,6 +3,7 @@ from typing import cast
 
 import pytest
 
+from agent.deployment_outcome_verification import DeploymentOutcomeVerificationStep
 from agent.incident_evidence import IncidentEvidenceStep, IncidentEvidenceStepRequest
 from agent.incident_follow_up import IncidentFollowUpStep, IncidentFollowUpStepRequest
 from agent.incident_hypothesis import IncidentHypothesisStep, IncidentHypothesisStepRequest
@@ -12,13 +13,20 @@ from agent.incident_recommendation import (
 )
 from agent.incident_triage import IncidentTriageStep, IncidentTriageStepRequest
 from context.session_artifacts import SessionArtifactContext
+from memory.checkpoints import SessionCheckpoint
 from memory.incident_working_memory import JsonIncidentWorkingMemoryStore
-from tools.implementations.incident_hypothesis import HypothesisType
+from tools.implementations.deployment_outcome_probe import DeploymentOutcomeProbeOutput
+from tools.implementations.deployment_rollback import DeploymentRollbackExecutionOutput
+from tools.implementations.incident_hypothesis import (
+    DEPLOYMENT_REGRESSION_VALIDATION_GAP,
+    HypothesisType,
+)
 from tools.implementations.incident_recommendation import (
     IncidentRecommendationBuilderTool,
     RecommendationType,
 )
 from tools.models import ToolCall, ToolResult
+from verifiers.base import VerifierResult, VerifierStatus
 
 
 def _repository_root() -> Path:
@@ -210,3 +218,109 @@ async def test_failed_recommendation_does_not_overwrite_working_memory(
 
     assert memory_after_failure == hypothesis_memory
     assert memory_after_failure.last_updated_by_step == "incident_hypothesis"
+
+
+@pytest.mark.asyncio
+async def test_outcome_verification_success_rewrites_working_memory_with_resolved_state(
+    tmp_path: Path,
+) -> None:
+    session_id = "session-working-memory-outcome"
+    incident_id = "incident-working-memory-outcome"
+    await _run_chain_to_hypothesis(
+        tmp_path,
+        session_id=session_id,
+        incident_id=incident_id,
+    )
+
+    recommendation_step = IncidentRecommendationStep(
+        transcript_root=tmp_path / "transcripts",
+        checkpoint_root=tmp_path / "checkpoints",
+    )
+    await recommendation_step.run(
+        IncidentRecommendationStepRequest(session_id=session_id)
+    )
+
+    store = JsonIncidentWorkingMemoryStore.for_incident(
+        incident_id,
+        root=tmp_path / "working_memory",
+    )
+    memory_before = store.load()
+    assert DEPLOYMENT_REGRESSION_VALIDATION_GAP in memory_before.unresolved_gaps
+
+    artifact_context = SessionArtifactContext.load(
+        session_id,
+        checkpoint_root=tmp_path / "checkpoints",
+        transcript_root=tmp_path / "transcripts",
+    )
+    outcome_step = DeploymentOutcomeVerificationStep(
+        transcript_root=tmp_path / "transcripts",
+        checkpoint_root=tmp_path / "checkpoints",
+    )
+    outcome_step._write_incident_working_memory(
+        session_id=session_id,
+        checkpoint=SessionCheckpoint(
+            checkpoint_id=f"{session_id}-deployment-outcome-verification",
+            session_id=session_id,
+            incident_id=incident_id,
+            current_phase="outcome_verification_succeeded",
+            current_step=artifact_context.checkpoint.current_step + 1,
+            selected_skills=artifact_context.checkpoint.selected_skills,
+            approval_state=artifact_context.checkpoint.approval_state,
+            summary_of_progress="Outcome verification passed.",
+        ),
+        verifier_result=VerifierResult(
+            status=VerifierStatus.PASS,
+            summary="Recovery verified after rollback.",
+        ),
+        artifact_context=artifact_context,
+        action_execution_output=DeploymentRollbackExecutionOutput(
+            incident_id=incident_id,
+            service="payments-api",
+            service_base_url="http://127.0.0.1:8001",
+            action_candidate_type="rollback_recent_deployment_candidate",
+            rollback_applied=True,
+            observed_version_before="2.1.0",
+            observed_version_after="2.0.9",
+            expected_bad_version="2.1.0",
+            expected_previous_version="2.0.9",
+            health_status_before="degraded",
+            health_status_after="healthy",
+            execution_summary="Rolled payments-api back from 2.1.0 to 2.0.9.",
+            safety_notes=["Rollback stayed within the reviewed scope."],
+        ),
+        outcome_probe_output=DeploymentOutcomeProbeOutput(
+            incident_id=incident_id,
+            service="payments-api",
+            service_base_url="http://127.0.0.1:8001",
+            current_version="2.0.9",
+            expected_previous_version="2.0.9",
+            health_status="healthy",
+            healthy=True,
+            error_rate=0.01,
+            timeout_rate=0.0,
+            latency_p95_ms=120,
+            evidence_refs=[
+                "http://127.0.0.1:8001/deployment",
+                "http://127.0.0.1:8001/health",
+                "http://127.0.0.1:8001/metrics",
+            ],
+            summary=(
+                "Runtime probe sees version 2.0.9, health_status=healthy, "
+                "error_rate=0.01, timeout_rate=0.00."
+            ),
+        ),
+    )
+
+    memory_after_success = store.load()
+
+    assert memory_after_success.source_phase == "outcome_verification_succeeded"
+    assert (
+        memory_after_success.last_updated_by_step
+        == "deployment_outcome_verification"
+    )
+    assert memory_after_success.unresolved_gaps == []
+    assert "rollback:2.1.0->2.0.9" in memory_after_success.important_evidence_references
+    assert "http://127.0.0.1:8001/metrics" in memory_after_success.important_evidence_references
+    assert memory_after_success.recommendation is not None
+    assert memory_after_success.recommendation.more_investigation_required is False
+    assert "Outcome verification passed" in memory_after_success.compact_handoff_note

@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from context.session_artifacts import SessionArtifactContext
 from memory.checkpoints import ApprovalState, ApprovalStatus
 from memory.incident_working_memory import IncidentWorkingMemory
+from tools.implementations.deployment_outcome_probe import DeploymentOutcomeProbeOutput
+from tools.implementations.deployment_rollback import DeploymentRollbackExecutionOutput
 from tools.implementations.evidence_reading import EvidenceReadOutput
 from tools.implementations.follow_up_investigation import FollowUpInvestigationOutput
 from tools.implementations.incident_action_stub import IncidentActionStubOutput
@@ -80,6 +82,12 @@ class IncidentHandoffContextAssembler:
         hypothesis_output = artifact_context.latest_verified_hypothesis_output().artifact
         recommendation_output = artifact_context.latest_verified_recommendation_output().artifact
         action_stub_output = artifact_context.latest_verified_action_stub_output().artifact
+        action_execution_output = (
+            artifact_context.latest_verified_action_execution_output().artifact
+        )
+        outcome_verification_output = (
+            artifact_context.latest_verified_outcome_verification_output().artifact
+        )
         working_memory = artifact_context.latest_incident_working_memory()
 
         approval = self._approval_summary(artifact_context.checkpoint.approval_state)
@@ -90,6 +98,8 @@ class IncidentHandoffContextAssembler:
             hypothesis_output=hypothesis_output,
             recommendation_output=recommendation_output,
             action_stub_output=action_stub_output,
+            action_execution_output=action_execution_output,
+            outcome_verification_output=outcome_verification_output,
             working_memory=working_memory,
         )
         leading_hypothesis_summary = self._leading_hypothesis_summary(
@@ -101,7 +111,9 @@ class IncidentHandoffContextAssembler:
             working_memory=working_memory,
         )
         unresolved_gaps = self._unresolved_gaps(
+            checkpoint_phase=artifact_context.checkpoint.current_phase,
             hypothesis_output=hypothesis_output,
+            outcome_verification_output=outcome_verification_output,
             working_memory=working_memory,
         )
         important_evidence_references = self._important_evidence_references(
@@ -109,6 +121,8 @@ class IncidentHandoffContextAssembler:
             hypothesis_output=hypothesis_output,
             recommendation_output=recommendation_output,
             action_stub_output=action_stub_output,
+            action_execution_output=action_execution_output,
+            outcome_verification_output=outcome_verification_output,
             working_memory=working_memory,
         )
         current_operator_attention_point = self._operator_attention_point(
@@ -119,6 +133,8 @@ class IncidentHandoffContextAssembler:
             hypothesis_output=hypothesis_output,
             recommendation_output=recommendation_output,
             action_stub_output=action_stub_output,
+            action_execution_output=action_execution_output,
+            outcome_verification_output=outcome_verification_output,
             working_memory=working_memory,
             progress_summary=artifact_context.checkpoint.summary_of_progress,
         )
@@ -152,6 +168,8 @@ class IncidentHandoffContextAssembler:
                 hypothesis_output=hypothesis_output,
                 recommendation_output=recommendation_output,
                 action_stub_output=action_stub_output,
+                action_execution_output=action_execution_output,
+                outcome_verification_output=outcome_verification_output,
                 working_memory=working_memory,
             ),
         )
@@ -229,12 +247,20 @@ class IncidentHandoffContextAssembler:
         hypothesis_output: IncidentHypothesisOutput | None,
         recommendation_output: IncidentRecommendationOutput | None,
         action_stub_output: IncidentActionStubOutput | None,
+        action_execution_output: DeploymentRollbackExecutionOutput | None,
+        outcome_verification_output: DeploymentOutcomeProbeOutput | None,
         working_memory: IncidentWorkingMemory | None,
     ) -> str | None:
         return next(
             (
                 service
                 for service in (
+                    outcome_verification_output.service
+                    if outcome_verification_output is not None
+                    else None,
+                    action_execution_output.service
+                    if action_execution_output is not None
+                    else None,
                     action_stub_output.service if action_stub_output is not None else None,
                     recommendation_output.service
                     if recommendation_output is not None
@@ -277,9 +303,21 @@ class IncidentHandoffContextAssembler:
     def _unresolved_gaps(
         self,
         *,
+        checkpoint_phase: str,
         hypothesis_output: IncidentHypothesisOutput | None,
+        outcome_verification_output: DeploymentOutcomeProbeOutput | None,
         working_memory: IncidentWorkingMemory | None,
     ) -> list[str]:
+        if (
+            working_memory is not None
+            and working_memory.source_phase == checkpoint_phase
+        ):
+            return working_memory.unresolved_gaps
+        if (
+            checkpoint_phase == "outcome_verification_succeeded"
+            and outcome_verification_output is not None
+        ):
+            return []
         if hypothesis_output is not None and hypothesis_output.unresolved_gaps:
             return hypothesis_output.unresolved_gaps
         if working_memory is None:
@@ -293,6 +331,8 @@ class IncidentHandoffContextAssembler:
         hypothesis_output: IncidentHypothesisOutput | None,
         recommendation_output: IncidentRecommendationOutput | None,
         action_stub_output: IncidentActionStubOutput | None,
+        action_execution_output: DeploymentRollbackExecutionOutput | None,
+        outcome_verification_output: DeploymentOutcomeProbeOutput | None,
         working_memory: IncidentWorkingMemory | None,
     ) -> list[str]:
         ordered_refs: list[str] = []
@@ -330,6 +370,18 @@ class IncidentHandoffContextAssembler:
             for ref in working_memory.important_evidence_references:
                 if ref not in ordered_refs:
                     ordered_refs.append(ref)
+        if action_execution_output is not None:
+            for ref in (
+                f"rollback:{action_execution_output.observed_version_before}->"
+                f"{action_execution_output.observed_version_after}",
+                action_execution_output.service_base_url,
+            ):
+                if ref not in ordered_refs:
+                    ordered_refs.append(ref)
+        if outcome_verification_output is not None:
+            for ref in outcome_verification_output.evidence_refs:
+                if ref not in ordered_refs:
+                    ordered_refs.append(ref)
         return ordered_refs
 
     def _operator_attention_point(
@@ -342,6 +394,8 @@ class IncidentHandoffContextAssembler:
         hypothesis_output: IncidentHypothesisOutput | None,
         recommendation_output: IncidentRecommendationOutput | None,
         action_stub_output: IncidentActionStubOutput | None,
+        action_execution_output: DeploymentRollbackExecutionOutput | None,
+        outcome_verification_output: DeploymentOutcomeProbeOutput | None,
         working_memory: IncidentWorkingMemory | None,
         progress_summary: str,
     ) -> str:
@@ -351,6 +405,10 @@ class IncidentHandoffContextAssembler:
                 f"Review the approval gate for {requested_action} and confirm the "
                 "recorded future preconditions still hold."
             )
+        if outcome_verification_output is not None:
+            return outcome_verification_output.summary
+        if action_execution_output is not None:
+            return action_execution_output.execution_summary
         if action_stub_output is not None:
             return action_stub_output.action_summary
         if recommendation_output is not None:
@@ -409,6 +467,8 @@ class IncidentHandoffContextAssembler:
         hypothesis_output: IncidentHypothesisOutput | None,
         recommendation_output: IncidentRecommendationOutput | None,
         action_stub_output: IncidentActionStubOutput | None,
+        action_execution_output: DeploymentRollbackExecutionOutput | None,
+        outcome_verification_output: DeploymentOutcomeProbeOutput | None,
         working_memory: IncidentWorkingMemory | None,
     ) -> list[HandoffArtifactReference]:
         references: list[HandoffArtifactReference] = []
@@ -485,6 +545,24 @@ class IncidentHandoffContextAssembler:
                     artifact_name="incident_action_stub_output",
                     path=artifact_context.transcript_path,
                     detail=action_stub_output.action_candidate_type,
+                )
+            )
+        if action_execution_output is not None:
+            add_reference(
+                HandoffArtifactReference(
+                    source=HandoffArtifactSource.VERIFIED_TRANSCRIPT_ARTIFACT,
+                    artifact_name="deployment_rollback_execution_output",
+                    path=artifact_context.transcript_path,
+                    detail=action_execution_output.execution_summary,
+                )
+            )
+        if outcome_verification_output is not None:
+            add_reference(
+                HandoffArtifactReference(
+                    source=HandoffArtifactSource.VERIFIED_TRANSCRIPT_ARTIFACT,
+                    artifact_name="deployment_outcome_probe_output",
+                    path=artifact_context.transcript_path,
+                    detail=outcome_verification_output.summary,
                 )
             )
         if working_memory is not None:

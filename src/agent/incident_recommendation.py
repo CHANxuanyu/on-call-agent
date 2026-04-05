@@ -485,5 +485,6 @@ class IncidentRecommendationStep:
             f"Current verified hypothesis for {hypothesis_output.service} is "
             f"{hypothesis_output.hypothesis_type}. "
             f"Current recommendation is {recommendation_output.recommendation_type}. "
+            "This step validates rollback readiness before any action candidate is proposed. "
             f"{approval_note}"
         )

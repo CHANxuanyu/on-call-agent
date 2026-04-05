@@ -139,7 +139,7 @@ async def test_handoff_context_uses_current_working_memory_when_available(
     assert handoff.leading_hypothesis_summary is not None
     assert "deployment regression" in handoff.leading_hypothesis_summary.lower()
     assert handoff.recommendation_summary is not None
-    assert "validate the recent deployment path" in handoff.recommendation_summary.lower()
+    assert "validate rollback readiness" in handoff.recommendation_summary.lower()
     assert handoff.approval.status is ApprovalStatus.NONE
     assert handoff.current_operator_attention_point == handoff.recommendation_summary
     assert handoff.compact_handoff_note == working_memory.compact_handoff_note
@@ -216,7 +216,7 @@ async def test_handoff_context_uses_verified_artifacts_when_working_memory_is_ab
     assert handoff.current_phase == "recommendation_supported"
     assert handoff.leading_hypothesis_summary is not None
     assert handoff.recommendation_summary is not None
-    assert "validate the recent deployment path" in handoff.recommendation_summary.lower()
+    assert "validate rollback readiness" in handoff.recommendation_summary.lower()
     assert handoff.compact_handoff_note != ""
     assert all(
         reference.source is not HandoffArtifactSource.INCIDENT_WORKING_MEMORY
@@ -250,7 +250,7 @@ async def test_handoff_context_prefers_newer_verified_artifacts_over_stale_worki
 
     assert handoff.current_phase == "action_stub_pending_approval"
     assert handoff.approval.status is ApprovalStatus.PENDING
-    assert handoff.approval.requested_action == "deployment_validation_candidate"
+    assert handoff.approval.requested_action == "rollback_recent_deployment_candidate"
     assert "review the approval gate" in handoff.current_operator_attention_point.lower()
     assert handoff.compact_handoff_note != working_memory.compact_handoff_note
     assert "Pending approval" in (handoff.approval.summary or "")

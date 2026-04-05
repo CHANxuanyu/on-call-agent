@@ -17,6 +17,10 @@ from tools.models import (
     ToolRiskLevel,
 )
 
+DEPLOYMENT_REGRESSION_VALIDATION_GAP = (
+    "Need rollback or mitigation confirmation before treating the regression as validated."
+)
+
 
 class HypothesisType(StrEnum):
     """Supported primary hypothesis outcomes for the narrow slice."""
@@ -137,10 +141,7 @@ class IncidentHypothesisBuilderTool:
                     "evidence_summary",
                     "observations",
                 ],
-                unresolved_gaps=[
-                    "Need rollback or mitigation confirmation before treating the regression "
-                    "as validated."
-                ],
+                unresolved_gaps=[DEPLOYMENT_REGRESSION_VALIDATION_GAP],
                 recommended_next_action=(
                     f"Review the deployment diff and validate rollback options for "
                     f"{evidence_output.service}."

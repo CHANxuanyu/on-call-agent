@@ -23,6 +23,9 @@ from tools.models import (
 class RecommendationType(StrEnum):
     """Supported recommendation outcomes for the narrow slice."""
 
+    # This serialized value is intentionally stable for replay/eval compatibility.
+    # In the live deployment-regression slice it means validating rollback readiness,
+    # not yet proposing or executing a rollback.
     VALIDATE_RECENT_DEPLOYMENT = "validate_recent_deployment"
     INVESTIGATE_MORE = "investigate_more"
 
@@ -139,27 +142,37 @@ class IncidentRecommendationBuilderTool:
                 consumed_hypothesis_type=hypothesis_output.hypothesis_type,
                 recommendation_type=RecommendationType.VALIDATE_RECENT_DEPLOYMENT,
                 action_summary=(
-                    f"Validate the recent deployment path for {hypothesis_output.service} "
-                    "and prepare an approval review before any non-read-only action."
+                    f"Validate rollback readiness for the recent deployment on "
+                    f"{hypothesis_output.service} and prepare an approval review if "
+                    "rollback preconditions hold."
                 ),
                 justification=(
                     f"{hypothesis_output.rationale_summary} The next action should stay "
-                    "advisory until approval is recorded."
+                    "at rollback-readiness validation until rollback preconditions are "
+                    "explicitly confirmed and an approval review can justify a later "
+                    "rollback candidate."
                 ),
                 risk_level=RecommendationRiskLevel.MEDIUM,
                 required_approval_level=RecommendationApprovalLevel.ONCALL_LEAD,
                 preconditions=[
-                    "Confirm the deployment diff matches the affected request path.",
-                    "Keep all next actions advisory until on-call lead approval is recorded.",
+                    (
+                        "Confirm the currently deployed version still matches the suspected "
+                        "bad release."
+                    ),
+                    "Confirm the previous version is a known-good rollback target.",
+                    (
+                        "Keep all non-read-only actions blocked until on-call lead approval "
+                        "is recorded."
+                    ),
                 ],
                 supporting_artifact_refs=supporting_refs,
                 expected_outcome=(
-                    f"A reviewed rollback or mitigation decision for "
-                    f"{hypothesis_output.service}."
+                    f"A verified rollback-readiness assessment can justify a later "
+                    f"approval-ready rollback candidate for {hypothesis_output.service}."
                 ),
                 rollback_or_safety_notes=(
-                    "Do not execute rollback or any write action without human approval "
-                    "and a rollback safety check."
+                    "Do not execute rollback or any write action without human approval, "
+                    "a version match check, and a bounded rollback safety check."
                 ),
                 more_investigation_required=True,
             )

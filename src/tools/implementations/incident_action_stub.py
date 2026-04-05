@@ -25,7 +25,9 @@ from tools.models import (
 class ActionCandidateType(StrEnum):
     """Supported action-candidate outcomes for the narrow slice."""
 
-    DEPLOYMENT_VALIDATION_CANDIDATE = "deployment_validation_candidate"
+    ROLLBACK_RECENT_DEPLOYMENT_CANDIDATE = "rollback_recent_deployment_candidate"
+    # Compatibility alias retained for older tests and replay-facing references.
+    DEPLOYMENT_VALIDATION_CANDIDATE = "rollback_recent_deployment_candidate"
     NO_ACTIONABLE_STUB_YET = "no_actionable_stub_yet"
 
 
@@ -50,9 +52,12 @@ class ApprovalGateOutcome(BaseModel):
             msg = "allowed_without_approval must remain false in this slice"
             raise ValueError(msg)
 
-        if self.proposed_action_type is ActionCandidateType.DEPLOYMENT_VALIDATION_CANDIDATE:
+        if (
+            self.proposed_action_type
+            is ActionCandidateType.ROLLBACK_RECENT_DEPLOYMENT_CANDIDATE
+        ):
             if not self.approval_required:
-                msg = "deployment validation candidate must require approval"
+                msg = "rollback candidate must require approval"
                 raise ValueError(msg)
             if self.approval_level is RecommendationApprovalLevel.NONE:
                 msg = "approval_level must be non-none when approval is required"
@@ -190,10 +195,12 @@ class IncidentActionStubBuilderTool:
                 incident_id=recommendation_output.incident_id,
                 service=recommendation_output.service,
                 consumed_recommendation_type=recommendation_output.recommendation_type,
-                action_candidate_type=ActionCandidateType.DEPLOYMENT_VALIDATION_CANDIDATE,
+                action_candidate_type=(
+                    ActionCandidateType.ROLLBACK_RECENT_DEPLOYMENT_CANDIDATE
+                ),
                 action_candidate_created=True,
                 action_summary=(
-                    f"Propose a deployment validation candidate for "
+                    f"Propose a rollback to the previous known-good version for "
                     f"{recommendation_output.service} pending approval."
                 ),
                 justification=(
@@ -203,7 +210,7 @@ class IncidentActionStubBuilderTool:
                 risk_level=recommendation_output.risk_level,
                 supporting_artifact_refs=recommendation_output.supporting_artifact_refs,
                 expected_outcome=(
-                    f"An approval-ready deployment validation candidate exists for "
+                    f"An approval-ready rollback candidate exists for "
                     f"{recommendation_output.service}."
                 ),
                 safety_notes=(
@@ -216,7 +223,9 @@ class IncidentActionStubBuilderTool:
                         "The proposed candidate could lead to non-read-only mitigation work "
                         "and must remain blocked pending on-call lead approval."
                     ),
-                    proposed_action_type=ActionCandidateType.DEPLOYMENT_VALIDATION_CANDIDATE,
+                    proposed_action_type=(
+                        ActionCandidateType.ROLLBACK_RECENT_DEPLOYMENT_CANDIDATE
+                    ),
                     allowed_without_approval=False,
                     approval_level=recommendation_output.required_approval_level,
                     future_preconditions=[
