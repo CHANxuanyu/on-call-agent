@@ -1,9 +1,11 @@
 # Demo Guide
 
-This is a 5-minute CLI walkthrough for the current runtime. It uses the existing operator-facing
-surface rather than pytest entrypoints so the demo matches what a reviewer can actually run.
+This is a 5-minute CLI walkthrough for the current product slice. It uses the existing
+operator-facing surface rather than pytest entrypoints so the demo matches what a reviewer can
+actually run today.
 
-For a shorter command reference, see [Usage Guide](usage.md).
+For a shorter command reference, see [Usage Guide](usage.md). For a more explicit local shell
+validation pass, see [Operator Shell Smoke Checklist](operator_shell_smoke_checklist.md).
 
 Runtime shape:
 
@@ -61,6 +63,9 @@ Example shell transcript:
 /exit
 ```
 
+That transcript is the fastest reviewer path. The smoke checklist covers the same shell surface
+with extra checks for fresh-session behavior, healthy/no-action gating, and `auto-safe`.
+
 `auto-safe` is also available in the shell, but it is fail-closed by default. It only auto-runs
 the bounded rollback when `.oncall/settings.toml` enables the policy and the exact live target
 base URL is allowlisted. If those checks do not pass, the session degrades to `semi-auto` and the
@@ -95,7 +100,8 @@ Optional rerun:
 oncall-agent verify-outcome <session_id> --json
 ```
 
-This is the narrow demo-grade ops-agent path in the repository today.
+This is the narrow demo-grade ops-agent path in the repository today. It is intentionally
+single-scenario and locally scoped.
 
 ## 2. List The Available Replay Scenarios
 

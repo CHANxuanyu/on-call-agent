@@ -3,6 +3,9 @@
 This is a human-guided local smoke pass for the current deployment-regression shell. It does not
 replace the existing automated tests.
 
+Use it alongside the [Usage Guide](usage.md) and [Demo Guide](demo.md) when you want a repeatable
+local operator-shell check without guessing the current command flow.
+
 ## 1. Setup
 
 Command

@@ -14,8 +14,9 @@ Built a Python incident-response agent runtime focused on harness reliability ra
 breadth. The project uses verifier-driven state transitions, append-only structured transcripts,
 checkpoint-driven resumability, synthetic failure normalization, and explicit approval boundaries
 to carry a narrow incident workflow from triage through approval-aware action candidacy. It also
-includes replay-style eval coverage and operator-facing handoff artifact generation from durable
-runtime state.
+includes one bounded live deployment-regression rollback path with external outcome verification,
+replay-style eval coverage, and operator-facing handoff artifact generation from durable runtime
+state.
 
 ## Full Resume Bullets
 
@@ -25,6 +26,8 @@ runtime state.
 - Implemented a narrow end-to-end slice chain from triage through follow-up, evidence,
   hypothesis, recommendation, and approval-gated action stubbing, with each phase advancing only
   after structured verification.
+- Added a single-scenario live deployment-regression path with approval-gated rollback execution
+  and external outcome verification on a local demo target.
 - Added runtime infrastructure for `SessionArtifactContext`, synthetic failure invariants,
   permission-decision provenance, incident working memory, and deterministic handoff artifact
   regeneration to improve auditability, replayability, and operator handoff quality.
@@ -33,5 +36,5 @@ runtime state.
 
 - Built a resumable, verifier-driven incident-response runtime with structured transcripts and
   durable checkpoints.
-- Added replayable failure-aware artifact flows and approval-aware action candidacy for
-  incident-response workflows.
+- Added replayable failure-aware artifact flows plus one bounded approval-gated rollback and
+  verification path for incident-response workflows.

@@ -2,10 +2,11 @@
 
 ## Purpose
 
-This repository is a production-oriented incident-response runtime prototype. It is designed to
-show how an agent harness can be made verifier-driven, resumable, auditable, and approval-aware
+This repository is a verifier-driven, durable, approval-gated incident-response runtime. It is
+designed to show how an agent harness can be made resumable, auditable, and externally verifiable
 before adding broader automation. The current milestone now includes one narrow live execution path
-for the `deployment-regression` family on a local demo target.
+for the `deployment-regression` family on a local demo target, plus a thin operator shell over
+that same runtime.
 
 The design borrows mature harness ideas from systems like Claude Code, but it is not a coding
 agent clone. It is an incident-response runtime with narrow, typed, deterministic slices.
@@ -99,9 +100,10 @@ The runtime surface is intentionally split:
 - replay and demo surface:
   `src/runtime/eval_surface.py` plus `src/evals/incident_chain_replay.py`
 
-There is no generic operator command for arbitrary session creation or loop orchestration. That is
-intentional. The current runtime is a narrow incident-response harness with one well-defined chain
-plus one explicit live deployment-regression command flow.
+There is still no generic operator command for arbitrary incident families or loop orchestration.
+That is intentional. The current runtime is a narrow incident-response harness with one
+well-defined chain, one explicit live deployment-regression flow, and one shell that wraps that
+same flow without introducing a second runtime.
 
 ## Four Runtime Layers
 
@@ -377,11 +379,14 @@ What is complete:
 - shared slice harness
 - permission provenance
 - first incident-working-memory slice
+- one bounded live rollback execution path with external outcome verification
+- operator shell with `manual`, `semi-auto`, and fail-closed `auto-safe`
 - operator-facing handoff assembly, writing, and regeneration
 
 What is intentionally deferred:
 
 - broad execution semantics beyond the one bounded rollback demo
+- broader incident families and action libraries
 - project-memory promotion
 - approval UI or reviewer workflow
 - external integrations

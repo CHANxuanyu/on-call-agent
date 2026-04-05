@@ -37,7 +37,7 @@ milestone rather than a broad agent product.
 | --- | --- | --- |
 | Primary unit of progress | verifier-backed incident slice transitions | generic tool-augmented conversational turns |
 | Resume source of truth | checkpoint plus append-only transcript events | broader turn/session state machinery |
-| Safety boundary | explicit approval-aware action candidacy, no remediation execution | broader execution workflows with richer product surfaces |
+| Safety boundary | explicit approval-aware action candidacy plus one bounded rollback demo path with external verification | broader execution workflows with richer product surfaces |
 | Memory story | checkpoint control state, transcript execution truth, first incident-working-memory slice, handoff artifacts | larger memory and context-management systems |
 | Scope choice | narrow deterministic incident chain | broad coding/product workflows |
 

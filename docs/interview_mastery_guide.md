@@ -14,14 +14,18 @@ The right framing is:
 
 ### What This Project Is
 
-This repository is a verifier-driven incident-response runtime prototype written in Python. It
-implements a narrow, deterministic incident step chain with typed tools, typed verifiers,
-append-only transcripts, resumable checkpoints, explicit permission boundaries, and operator-facing
-handoff artifacts.
+This repository is a verifier-driven incident-response runtime written in Python. It implements a
+narrow, deterministic incident step chain with typed tools, typed verifiers, append-only
+transcripts, resumable checkpoints, explicit permission boundaries, operator-facing handoff
+artifacts, and one thin operator shell.
 
 The implemented chain is:
 
 `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
+
+For the single live deployment-regression path, an approved session can continue through:
+
+`bounded rollback execution -> outcome verification`
 
 ### What This Project Is Not
 
@@ -30,7 +34,7 @@ It is not:
 - a generic coding agent
 - a broad autonomous operations platform
 - a multi-agent workflow engine
-- a remediation system that writes to real external systems
+- a broad remediation system that writes to arbitrary external systems
 - a productized UI or approval workflow
 
 ### Why It Exists
@@ -90,10 +94,11 @@ model can call a tool. The important part is the harness around that behavior: a
 structured transcripts, checkpoint-driven resumability, verifier-gated state transitions, explicit
 permission provenance, synthetic failure handling, and deterministic handoff regeneration. The
 implemented runtime is deliberately narrow: it moves an incident from triage through follow-up,
-evidence, hypothesis, recommendation, and an approval-gated action stub. It stops before real
-execution on purpose. That makes it a strong runtime-engineering project because it proves
-replayability, auditability, and safety boundaries without pretending to solve broader automation
-or productization.
+evidence, hypothesis, recommendation, and an approval-gated action stub. The general replay path
+still stops there on purpose, but the repo now includes one bounded live deployment-regression
+rollback with external outcome verification after explicit approval. That makes it a strong
+runtime-engineering project because it proves replayability, auditability, and safety boundaries
+without pretending to solve broader automation or mature productization.
 
 ### 2-3 Minute Version
 
@@ -115,16 +120,17 @@ results, and interrupted paths should stay replayable instead of collapsing into
 or `None`.
 
 The implemented chain is triage, follow-up target selection, evidence reading, incident
-hypothesis, recommendation, and an approval-gated action stub. The runtime does not execute
-remediation. It stops when it can justify a candidate and make the approval boundary explicit. I
-also added a first incident-working-memory slice plus handoff context assembly and stable handoff
-artifact regeneration so operator-facing output can be rebuilt deterministically from durable
-runtime state.
+hypothesis, recommendation, and an approval-gated action stub. The replay path still stops when it
+can justify a candidate and make the approval boundary explicit. The live deployment-regression
+path then adds exactly one bounded rollback execution plus external outcome verification after
+approval. I also added a first incident-working-memory slice plus handoff context assembly and
+stable handoff artifact regeneration so operator-facing output can be rebuilt deterministically
+from durable runtime state.
 
 ### 5-7 Minute Technical Walkthrough
 
 Start with the problem definition. This repository is trying to answer: what would a reliable
-incident-response runtime look like before real execution is allowed?
+incident-response runtime look like before broad automation is allowed?
 
 The first design choice is a narrow step chain instead of a generic loop. The runtime implements
 six typed slices:
@@ -138,6 +144,9 @@ six typed slices:
 5. `IncidentRecommendationStep` turns one verified hypothesis into one structured recommendation.
 6. `IncidentActionStubStep` turns one verified recommendation into an approval-aware action stub or
    an explicit non-actionable result.
+
+For the single live deployment-regression demo path, an approved session can then continue through
+one bounded rollback execution step and one external outcome-verification step.
 
 The important part is how those steps move forward. Each step emits transcript events, runs a
 verifier, and then writes a checkpointed phase. The phase change is verifier-driven. If a verifier
@@ -626,7 +635,8 @@ made the project less focused and harder to defend architecturally."
 #### 1. What did you build?
 
 - A verifier-driven incident-response runtime in Python.
-- It advances a narrow incident through typed slices from triage to approval-gated action stub.
+- It advances a narrow incident through typed slices from triage to an approval boundary, with one
+  bounded live rollback and external verification path for deployment regression.
 - The interesting part is the runtime discipline: transcripts, checkpoints, verification,
   resumability, and handoff regeneration.
 
@@ -657,7 +667,9 @@ made the project less focused and harder to defend architecturally."
 - Evidence reads one deterministic bundle.
 - Hypothesis creates one structured theory.
 - Recommendation creates one structured next step.
-- Action stub creates approval-aware action candidacy without execution.
+- Action stub creates approval-aware action candidacy.
+- For the one live deployment-regression path, explicit approval can then unlock a bounded rollback
+  and external outcome verification.
 
 #### 6. Why use append-only transcripts?
 
@@ -772,8 +784,9 @@ the verifier result?
 #### 22. Why stop at an approval-gated action stub?
 
 - Because a candidate and an execution are different safety problems.
-- This milestone proves the runtime can reach the approval boundary honestly.
-- It does not pretend that side-effecting execution is solved.
+- The general replay/runtime path still stops there honestly.
+- The repo adds exactly one bounded live rollback path after explicit approval instead of
+  pretending that broad side-effecting execution is solved.
 
 #### 23. How is approval represented?
 
@@ -942,7 +955,8 @@ What to highlight:
 What to say:
 
 "This is the branch where the runtime has enough evidence to justify a concrete action candidate,
-but it still stops at the approval boundary instead of executing anything."
+and the replay path still stops at the approval boundary. The separate live demo can continue after
+approval through one bounded rollback and external verification."
 
 #### Scenario B: Conservative Path
 

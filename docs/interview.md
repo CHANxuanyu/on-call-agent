@@ -8,8 +8,10 @@ checkpoint-driven resumability, explicit verifier-gated phase transitions, and a
 state. I implemented the system in narrow slices from triage through follow-up, evidence,
 hypothesis, recommendation, and an approval-gated action stub. I also added shared artifact
 reconstruction through `SessionArtifactContext`, synthetic failure normalization, incident working
-memory, and deterministic handoff artifact regeneration. The result is a small but reliable agent
-harness that is auditable and replayable, without claiming real execution or broad autonomy.
+memory, and deterministic handoff artifact regeneration. The current repo also includes one
+bounded live deployment-regression path where an approved rollback can execute against a local demo
+target and then be externally verified. The result is a small but reliable agent harness that is
+auditable and replayable without claiming broad execution or mature product scope.
 
 ## 2-3 Minute Version
 
@@ -28,11 +30,11 @@ into synthetic failures so the failure path is replayable instead of disappearin
 branch logic.
 
 The implemented chain is deliberately narrow: triage, follow-up target selection, evidence
-reading, incident hypothesis, recommendation, and an approval-gated action stub. The runtime does
-not execute real remediation. It stops when it can justify a structured action candidate and make
-the approval boundary explicit. That was a deliberate milestone choice because it proves
-resumability, verification, replayability, and safety boundaries before taking on real execution
-semantics.
+reading, incident hypothesis, recommendation, and an approval-gated action stub. The replay path
+still stops there on purpose. The live deployment-regression path now adds one bounded rollback
+execution plus external outcome verification after explicit approval. That was a deliberate
+milestone choice because it proves resumability, verification, replayability, and safety
+boundaries before taking on broader execution semantics.
 
 The later additions are also infrastructure-focused. I split out a first incident-working-memory
 layer so semantic incident understanding does not get dumped into checkpoints. Then I built a
@@ -98,8 +100,9 @@ Answer outline:
 
 Answer outline:
 - Producing a candidate and executing it are different safety problems.
-- The milestone proves approval-aware action candidacy without pretending to solve safe execution.
-- That was the right stopping point for a runtime-focused project.
+- The general replay/runtime path still stops at that boundary on purpose.
+- The repo adds exactly one bounded live rollback path after explicit approval rather than claiming
+  safe broad execution.
 
 ### What makes the failure path strong here?
 
@@ -113,7 +116,9 @@ Answer outline:
 
 - The runtime is intentionally narrow and deterministic; it does not cover broad incident-response
   behavior.
-- It does not execute remediation, integrate with real external systems, or include approval UI.
+- The only live write path is one bounded rollback against the local demo target; it does not
+  execute broad remediation or integrate with third-party ops systems.
+- It does not include approval UI.
 - Project memory is still deferred beyond the first incident-working-memory slice.
 - The system is stronger as a harness milestone than as a finished operations product, which is
   exactly the intended tradeoff.

@@ -1,11 +1,21 @@
 # Verifier-Driven Incident Response Agent Harness
 
-Python runtime prototype for a narrow incident-response workflow built around verifier-driven state
-transitions, append-only transcripts, resumable checkpoints, and approval-aware boundaries. This
-repository is not a generic agent demo, not a coding agent, and not a broad autonomous remediation
-system. It is a harness-first milestone that now includes one honest live closed loop for the
-`deployment-regression` incident family on a local demo target while keeping the broader system
-deliberately narrow, inspectable, replayable, and safe.
+Python incident-response runtime for a narrow verifier-driven workflow built around append-only
+transcripts, resumable checkpoints, explicit approval boundaries, and durable artifact recovery.
+Today the repository supports one honest, demo-grade live ops path for the
+`deployment-regression` incident family on a local demo target, plus a thin operator shell with
+`manual`, `semi-auto`, and fail-closed `auto-safe` modes. It is not a mature ops product, not a
+coding agent, and not a broad autonomous remediation system.
+
+## Start Here
+
+- [Usage Guide](docs/usage.md): practical command reference for the shell and direct CLI surfaces
+- [Demo Guide](docs/demo.md): 5-minute walkthrough for the current product slice
+- [Architecture Summary](docs/architecture.md): runtime seams, durable-state layers, and safety
+  boundaries
+- [Operator Shell Smoke Checklist](docs/operator_shell_smoke_checklist.md): human-guided local
+  rerun for the current shell flows
+- [Project Summary](docs/project_summary.md): short repository framing
 
 ## What This Repository Is
 
@@ -170,6 +180,10 @@ The shell also exposes a thin session workspace over the existing durable state:
 - `/status` shows identity, phase, mode, approval, evidence, verifier, and handoff state
 - `/why-not-auto` explains the current auto-safe eligibility and any downgrade reason
 - `/tail` shows recent important session activity from transcript events
+
+For a human-guided local rerun of the shell flows, including fresh-session, healthy/no-action, and
+auto-safe checks, use the [Operator Shell Smoke Checklist](docs/operator_shell_smoke_checklist.md)
+with `scripts/test_operator_shell_smoke.sh`.
 
 Start a live incident session from [deployment_regression_payload.json](docs/examples/deployment_regression_payload.json):
 
@@ -443,16 +457,20 @@ This repository should be read as a completed runtime milestone, not a finished 
 What is complete for this milestone:
 
 - verifier-gated slice chain from triage through approval-aware action candidacy
+- one live deployment-regression closed loop with approval-gated bounded rollback execution and
+  external outcome verification on the demo target
 - checkpoint plus transcript resumability
 - replayable artifact reconstruction through `SessionArtifactContext`
 - synthetic failure normalization for malformed or partial runtime paths
 - permission provenance and explicit approval-state persistence
 - first incident-working-memory slice
+- operator shell with `manual`, `semi-auto`, and fail-closed `auto-safe` modes
 - operator-facing handoff assembly, artifact writing, and deterministic regeneration
 
 What is intentionally deferred:
 
-- real execution semantics
+- broad execution semantics beyond the one bounded rollback demo path
+- broader incident families and action types
 - broader memory layering beyond the first incident-working-memory slice
 - external approvals, integrations, and product surface
 
@@ -461,6 +479,7 @@ What is intentionally deferred:
 - [Usage Guide](docs/usage.md)
 - [Architecture Summary](docs/architecture.md)
 - [Demo Guide](docs/demo.md)
+- [Operator Shell Smoke Checklist](docs/operator_shell_smoke_checklist.md)
 - [Resume Framing](docs/resume.md)
 - [Interview Guide](docs/interview.md)
 - [Project Summary](docs/project_summary.md)

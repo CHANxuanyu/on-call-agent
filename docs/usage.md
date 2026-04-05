@@ -1,7 +1,9 @@
 # Usage Guide
 
-This guide is the practical CLI entrypoint for operators and reviewers. The runtime now has two
-honest surfaces:
+This guide is the practical CLI entrypoint for operators and reviewers. The recommended operator
+surface is the shell; the direct CLI commands remain the underlying runtime surfaces.
+
+The runtime now has two honest paths:
 
 - replay / inspection:
   `triage -> follow-up -> evidence -> hypothesis -> recommendation -> approval-gated action stub`
@@ -44,6 +46,9 @@ Recommended shell flow for the live demo:
 /exit
 ```
 
+For a human-guided local rerun of the shell scenarios, use the
+[Operator Shell Smoke Checklist](operator_shell_smoke_checklist.md).
+
 Session workspace commands:
 
 - `/sessions`: list recent sessions from durable checkpoints and transcripts in compact form
@@ -67,6 +72,9 @@ Mode behavior:
   rollback candidate exists, the expected versions still match live deployment state, and no
   blocking gaps remain. Otherwise the shell degrades to `semi-auto` and records the downgrade
   reason durably in the session checkpoint.
+
+This is intentionally narrow autonomy. `auto-safe` does not generalize beyond the existing bounded
+deployment-regression rollback path.
 
 The repository-local default lives in `.oncall/settings.toml`:
 
@@ -125,6 +133,8 @@ If you want to re-probe runtime state after approval, rerun:
 ```bash
 oncall-agent verify-outcome <session_id> --json
 ```
+
+For a faster product walkthrough that keeps everything in one terminal, see [Demo Guide](demo.md).
 
 ## 3. List The Built-In Evals
 
