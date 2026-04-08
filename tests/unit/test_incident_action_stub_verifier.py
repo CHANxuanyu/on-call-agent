@@ -206,3 +206,26 @@ async def test_action_stub_verifier_rejects_insufficient_state_with_verified_rec
 
     assert result.status is VerifierStatus.FAIL
     assert result.diagnostics[0].code == "verified_recommendation_missing"
+
+
+@pytest.mark.asyncio
+async def test_action_stub_verifier_rejects_globally_valid_wrong_family_phase() -> None:
+    verifier = IncidentActionStubOutcomeVerifier()
+
+    result = await verifier.verify(
+        VerifierRequest(
+            name=verifier.definition.name,
+            target="incident-1103",
+            inputs={
+                "branch": ActionStubBranch.INSUFFICIENT_STATE,
+                "recommendation_phase": "hypothesis_supported",
+                "recommendation_verifier_passed": False,
+                "insufficiency_reason": "Recommendation has not been built yet.",
+                "recommendation_output": None,
+                "action_stub_output": None,
+            },
+        )
+    )
+
+    assert result.status is VerifierStatus.UNVERIFIED
+    assert result.diagnostics[0].code == "invalid_incident_action_stub_inputs"

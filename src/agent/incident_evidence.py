@@ -18,6 +18,7 @@ from runtime.harness import (
     pending_verifier_for_status,
 )
 from runtime.models import SyntheticFailure
+from runtime.phases import EVIDENCE_STEP_ENTRY_PHASES, IncidentPhase
 from tools.implementations.evidence_reading import EvidenceBundleReaderTool, EvidenceReadOutput
 from tools.implementations.follow_up_investigation import (
     FollowUpInvestigationOutput,
@@ -259,6 +260,10 @@ class IncidentEvidenceStep:
             transcript_root=self.transcript_root,
         )
         artifact_context = harness.artifact_context
+        artifact_context.require_current_phase_in(
+            allowed_phases=EVIDENCE_STEP_ENTRY_PHASES,
+            boundary_name="incident_evidence step entry",
+        )
         follow_up_resolution = artifact_context.follow_up_output_for_evidence_step()
         follow_up_record = artifact_context.latest_follow_up_output()
         return _EvidenceResumeContext(
@@ -331,7 +336,7 @@ class IncidentEvidenceStep:
             return "evidence_reading_failed_verification"
         if branch is EvidenceReadBranch.READ_EVIDENCE:
             return "evidence_reading_completed"
-        if previous_phase == "follow_up_complete_no_action":
+        if previous_phase == IncidentPhase.FOLLOW_UP_COMPLETE_NO_ACTION:
             return "evidence_reading_not_applicable"
         return "evidence_reading_deferred"
 
@@ -379,7 +384,7 @@ class IncidentEvidenceStep:
             return AgentStatus.FAILED
         if branch is EvidenceReadBranch.READ_EVIDENCE:
             return AgentStatus.RUNNING
-        if previous_phase == "follow_up_complete_no_action":
+        if previous_phase == IncidentPhase.FOLLOW_UP_COMPLETE_NO_ACTION:
             return AgentStatus.COMPLETED
         return AgentStatus.VERIFYING
 
@@ -393,4 +398,4 @@ class IncidentEvidenceStep:
             return True
         if branch is EvidenceReadBranch.READ_EVIDENCE:
             return True
-        return previous_phase != "follow_up_complete_no_action"
+        return previous_phase != IncidentPhase.FOLLOW_UP_COMPLETE_NO_ACTION

@@ -30,11 +30,13 @@ from transcripts.models import (
     ResumeStartedEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
 from verifiers.base import (
     VerifierDefinition,
+    VerifierKind,
     VerifierRequest,
     VerifierResult,
     VerifierStatus,
@@ -83,6 +85,7 @@ class _PassingVerifier:
     @property
     def definition(self) -> VerifierDefinition:
         return VerifierDefinition(
+            kind=VerifierKind.OUTCOME,
             name="harness_test_verifier",
             description="Pass when the harness produced a structured output.",
             target_condition="structured output exists",
@@ -96,16 +99,47 @@ class _PassingVerifier:
         )
 
 
-def _write_checkpoint(root: Path, *, session_id: str) -> Path:
+class _UnverifiedVerifier:
+    @property
+    def definition(self) -> VerifierDefinition:
+        return VerifierDefinition(
+            kind=VerifierKind.OUTCOME,
+            name="harness_test_verifier",
+            description="Return an unverified result for harness testing.",
+            target_condition="structured output still needs verification",
+        )
+
+    async def verify(self, request: VerifierRequest) -> VerifierResult:
+        del request
+        return VerifierResult(
+            status=VerifierStatus.UNVERIFIED,
+            summary="Verification is still pending.",
+        )
+
+
+def _write_checkpoint(
+    root: Path,
+    *,
+    session_id: str,
+    transcript_root: Path,
+) -> Path:
     checkpoint_path = root / f"{session_id}.json"
-    JsonCheckpointStore(checkpoint_path).write(
-        SessionCheckpoint(
-            checkpoint_id=f"{session_id}-checkpoint",
+    checkpoint = SessionCheckpoint(
+        checkpoint_id=f"{session_id}-checkpoint",
+        session_id=session_id,
+        incident_id=f"{session_id}-incident",
+        current_phase="hypothesis_supported",
+        current_step=4,
+        summary_of_progress="Harness test checkpoint.",
+    )
+    JsonCheckpointStore(checkpoint_path).write(checkpoint)
+    JsonlTranscriptStore(transcript_root / f"{session_id}.jsonl").append(
+        CheckpointWrittenEvent(
             session_id=session_id,
-            incident_id=f"{session_id}-incident",
-            current_phase="hypothesis_supported",
-            current_step=4,
-            summary_of_progress="Harness test checkpoint.",
+            step_index=checkpoint.current_step,
+            checkpoint_id=checkpoint.checkpoint_id,
+            checkpoint_path=checkpoint_path,
+            summary_of_progress=checkpoint.summary_of_progress,
         )
     )
     return checkpoint_path
@@ -117,7 +151,11 @@ async def test_resumable_slice_harness_records_resume_tool_verifier_and_checkpoi
 ) -> None:
     checkpoint_root = tmp_path / "checkpoints"
     transcript_root = tmp_path / "transcripts"
-    _write_checkpoint(checkpoint_root, session_id="harness-success")
+    _write_checkpoint(
+        checkpoint_root,
+        session_id="harness-success",
+        transcript_root=transcript_root,
+    )
 
     harness = ResumableSliceHarness.load(
         session_id="harness-success",
@@ -171,14 +209,16 @@ async def test_resumable_slice_harness_records_resume_tool_verifier_and_checkpoi
 
     assert output.value == "ok"
     assert verifier_result.status is VerifierStatus.PASS
-    assert isinstance(events[0], ResumeStartedEvent)
-    assert isinstance(events[1], ModelStepEvent)
-    assert isinstance(events[2], PermissionDecisionEvent)
-    assert isinstance(events[3], ToolRequestEvent)
-    assert isinstance(events[4], ToolResultEvent)
-    assert isinstance(events[5], VerifierResultEvent)
-    assert isinstance(events[6], CheckpointWrittenEvent)
-    permission_event = events[2]
+    assert isinstance(events[0], CheckpointWrittenEvent)
+    assert isinstance(events[1], ResumeStartedEvent)
+    assert isinstance(events[2], ModelStepEvent)
+    assert isinstance(events[3], PermissionDecisionEvent)
+    assert isinstance(events[4], ToolRequestEvent)
+    assert isinstance(events[5], ToolResultEvent)
+    assert isinstance(events[6], VerifierRequestEvent)
+    assert isinstance(events[7], VerifierResultEvent)
+    assert isinstance(events[8], CheckpointWrittenEvent)
+    permission_event = events[3]
     assert isinstance(permission_event, PermissionDecisionEvent)
     assert (
         permission_event.decision.provenance.policy_source
@@ -206,7 +246,11 @@ async def test_resumable_slice_harness_normalizes_malformed_tool_output(
 ) -> None:
     checkpoint_root = tmp_path / "checkpoints"
     transcript_root = tmp_path / "transcripts"
-    _write_checkpoint(checkpoint_root, session_id="harness-malformed")
+    _write_checkpoint(
+        checkpoint_root,
+        session_id="harness-malformed",
+        transcript_root=transcript_root,
+    )
 
     harness = ResumableSliceHarness.load(
         session_id="harness-malformed",
@@ -249,8 +293,78 @@ async def test_resumable_slice_harness_normalizes_malformed_tool_output(
     )
     assert artifact_failure is not None
     assert artifact_failure.code is SyntheticFailureCode.TOOL_OUTPUT_VALIDATION_FAILED
-    assert isinstance(events[0], ResumeStartedEvent)
-    assert isinstance(events[1], ModelStepEvent)
-    assert isinstance(events[2], PermissionDecisionEvent)
-    assert isinstance(events[3], ToolRequestEvent)
-    assert isinstance(events[4], ToolResultEvent)
+    assert isinstance(events[0], CheckpointWrittenEvent)
+    assert isinstance(events[1], ResumeStartedEvent)
+    assert isinstance(events[2], ModelStepEvent)
+    assert isinstance(events[3], PermissionDecisionEvent)
+    assert isinstance(events[4], ToolRequestEvent)
+    assert isinstance(events[5], ToolResultEvent)
+
+
+@pytest.mark.asyncio
+async def test_resumable_slice_harness_writes_pending_verifier_only_after_non_pass_result(
+    tmp_path: Path,
+) -> None:
+    checkpoint_root = tmp_path / "checkpoints"
+    transcript_root = tmp_path / "transcripts"
+    _write_checkpoint(
+        checkpoint_root,
+        session_id="harness-unverified",
+        transcript_root=transcript_root,
+    )
+
+    harness = ResumableSliceHarness.load(
+        session_id="harness-unverified",
+        step_name="test_harness_slice",
+        checkpoint_root=checkpoint_root,
+        transcript_root=transcript_root,
+    )
+
+    harness.emit_resume_started(reason="Resume pending-verifier harness test.")
+    harness.emit_model_step(
+        summary="The harness will record an unverified verifier result.",
+        planned_verifiers=["harness_test_verifier"],
+    )
+    tool_outcome = await harness.execute_read_only_tool(
+        tool=_ReadOnlySuccessTool(),
+        permission_policy=PermissionPolicy(),
+        tool_call=ToolCall(name="harness_test_tool", arguments={}),
+        call_id="call-1",
+        output_model=_HarnessOutput,
+        permission_denied_message="harness test tool should always be allowed",
+    )
+    output = tool_outcome.output
+    assert output is not None
+    verifier_request = VerifierRequest(
+        name="harness_test_verifier",
+        target="harness-unverified-incident",
+        inputs={"value": output.model_dump(mode="json")},
+    )
+    verifier_result = await harness.execute_verifier(
+        verifier=_UnverifiedVerifier(),
+        request=verifier_request,
+    )
+    checkpoint = SessionCheckpoint(
+        checkpoint_id="harness-unverified-next",
+        session_id="harness-unverified",
+        incident_id="harness-unverified-incident",
+        current_phase="recommendation_deferred",
+        current_step=harness.step_index,
+        pending_verifier=pending_verifier_for_status(
+            verifier_name="harness_test_verifier",
+            verifier_request=verifier_request,
+            verifier_status=verifier_result.status,
+        ),
+        summary_of_progress="Harness test recorded an unverified verifier result.",
+    )
+    harness.write_checkpoint(checkpoint)
+
+    events = JsonlTranscriptStore(transcript_root / "harness-unverified.jsonl").read_all()
+    stored_checkpoint = JsonCheckpointStore(checkpoint_root / "harness-unverified.json").load()
+
+    assert verifier_result.status is VerifierStatus.UNVERIFIED
+    assert isinstance(events[6], VerifierRequestEvent)
+    assert isinstance(events[7], VerifierResultEvent)
+    assert isinstance(events[8], CheckpointWrittenEvent)
+    assert stored_checkpoint.pending_verifier is not None
+    assert stored_checkpoint.pending_verifier.verifier_name == "harness_test_verifier"

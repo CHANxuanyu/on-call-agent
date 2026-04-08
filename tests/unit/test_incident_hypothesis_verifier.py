@@ -221,3 +221,26 @@ async def test_hypothesis_verifier_rejects_insufficient_state_with_verified_evid
 
     assert result.status is VerifierStatus.FAIL
     assert result.diagnostics[0].code == "verified_evidence_missing"
+
+
+@pytest.mark.asyncio
+async def test_hypothesis_verifier_rejects_globally_valid_wrong_family_phase() -> None:
+    verifier = IncidentHypothesisOutcomeVerifier()
+
+    result = await verifier.verify(
+        VerifierRequest(
+            name=verifier.definition.name,
+            target="incident-704",
+            inputs={
+                "branch": HypothesisBranch.INSUFFICIENT_STATE,
+                "evidence_phase": "follow_up_investigation_selected",
+                "evidence_verifier_passed": False,
+                "insufficiency_reason": "Evidence has not been read yet.",
+                "evidence_output": None,
+                "hypothesis_output": None,
+            },
+        )
+    )
+
+    assert result.status is VerifierStatus.UNVERIFIED
+    assert result.diagnostics[0].code == "invalid_incident_hypothesis_inputs"

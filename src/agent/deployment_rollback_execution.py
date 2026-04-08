@@ -19,6 +19,7 @@ from runtime.harness import (
     pending_verifier_for_status,
 )
 from runtime.models import SyntheticFailure
+from runtime.phases import ROLLBACK_EXECUTION_STEP_ENTRY_PHASES
 from tools.implementations.deployment_rollback import (
     DeploymentRollbackExecutionOutput,
     DeploymentRollbackExecutorTool,
@@ -238,6 +239,10 @@ class DeploymentRollbackExecutionStep:
             transcript_root=self.transcript_root,
         )
         artifact_context = harness.artifact_context
+        artifact_context.require_current_phase_in(
+            allowed_phases=ROLLBACK_EXECUTION_STEP_ENTRY_PHASES,
+            boundary_name="deployment_rollback_execution step entry",
+        )
         action_stub_resolution = artifact_context.latest_verified_action_stub_output()
         return _RollbackExecutionContext(
             harness=harness,
@@ -330,6 +335,7 @@ class DeploymentRollbackExecutionStep:
                 step_index=harness.step_index,
                 call_id=call_id,
                 tool_call=tool_call,
+                risk_level=self.tool.definition.risk_level,
             )
         )
         tool_result = await execute_tool_with_invariants(

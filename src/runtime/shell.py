@@ -43,6 +43,7 @@ from runtime.live_surface import (
     run_start_deployment_regression_incident,
     run_verify_deployment_regression_outcome,
 )
+from runtime.phases import IncidentPhase
 from runtime.settings import RuntimeSettings, load_runtime_settings
 from tools.implementations.deployment_outcome_probe import DeploymentOutcomeProbeOutput
 from tools.implementations.evidence_reading import EvidenceReadOutput
@@ -113,7 +114,7 @@ class SessionWorkspaceSummary(BaseModel):
     session_id: str = Field(min_length=1)
     incident_id: str = Field(min_length=1)
     family: str = Field(min_length=1)
-    current_phase: str = Field(min_length=1)
+    current_phase: IncidentPhase
     requested_mode: str = Field(min_length=1)
     effective_mode: str = Field(min_length=1)
     approval_status: str = Field(min_length=1)
@@ -287,7 +288,7 @@ def build_shell_status_payload(
         "session_id": artifact_context.session_id,
         "incident_id": checkpoint.incident_id,
         "family": _family_from_triage_input(artifact_context.latest_triage_input()),
-        "current_phase": checkpoint.current_phase,
+        "current_phase": checkpoint.current_phase.value,
         "current_step": checkpoint.current_step,
         "requested_mode": operator_shell.requested_mode.value,
         "effective_mode": operator_shell.effective_mode.value,

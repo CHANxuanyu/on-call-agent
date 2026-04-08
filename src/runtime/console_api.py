@@ -30,6 +30,7 @@ from runtime.live_surface import (
     run_resolve_deployment_regression_approval,
     run_verify_deployment_regression_outcome,
 )
+from runtime.phases import IncidentPhase
 from runtime.shell import build_shell_status_payload
 from tools.implementations.deployment_outcome_probe import DeploymentOutcomeProbeOutput
 from tools.implementations.incident_triage import IncidentTriageInput
@@ -90,7 +91,7 @@ class ConsoleSessionListItem(BaseModel):
     session_id: str = Field(min_length=1)
     incident_id: str = Field(min_length=1)
     family: str = Field(min_length=1)
-    current_phase: str = Field(min_length=1)
+    current_phase: IncidentPhase
     requested_mode: OperatorAutonomyMode
     effective_mode: OperatorAutonomyMode
     approval_status: ApprovalStatus
@@ -125,7 +126,7 @@ class ConsoleSessionDetail(BaseModel):
     incident_id: str = Field(min_length=1)
     checkpoint_id: str = Field(min_length=1)
     family: str = Field(min_length=1)
-    current_phase: str = Field(min_length=1)
+    current_phase: IncidentPhase
     current_step: int = Field(ge=0)
     summary_of_progress: str = Field(min_length=1)
     requested_mode: OperatorAutonomyMode
@@ -172,7 +173,7 @@ class ConsoleVerificationResult(BaseModel):
 
     session_id: str = Field(min_length=1)
     incident_id: str = Field(min_length=1)
-    current_phase: str = Field(min_length=1)
+    current_phase: IncidentPhase
     status: ConsoleVerificationStatus
     verifier_status: VerifierStatus | None = None
     summary: str = Field(min_length=1)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
 from runtime.models import SyntheticFailure
 from tools.implementations.deployment_rollback import DeploymentRollbackExecutionOutput
@@ -16,11 +16,12 @@ from verifiers.base import (
     VerifierDefinition,
     VerifierDiagnostic,
     VerifierEvidence,
+    VerifierKind,
     VerifierRequest,
     VerifierResult,
-    VerifierRetryHint,
     VerifierStatus,
 )
+from verifiers.contracts import validate_inputs_model, verify_request_name
 
 
 class RollbackExecutionBranch(StrEnum):
@@ -49,6 +50,7 @@ class DeploymentRollbackExecutionVerifier:
     @property
     def definition(self) -> VerifierDefinition:
         return VerifierDefinition(
+            kind=VerifierKind.OUTCOME,
             name="deployment_rollback_execution",
             description=(
                 "Validate that the rollback execution step either correctly deferred due to "
@@ -61,45 +63,35 @@ class DeploymentRollbackExecutionVerifier:
         )
 
     async def verify(self, request: VerifierRequest) -> VerifierResult:
-        if request.name != self.definition.name:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Verifier request name does not match the rollback execution verifier.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="verifier_name_mismatch",
-                        message=(
-                            f"expected verifier '{self.definition.name}' but received "
-                            f"'{request.name}'"
-                        ),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Fix the verifier selection before retrying.",
-                ),
-            )
+        contract = self._verify_contract(request)
+        if isinstance(contract, VerifierResult):
+            return contract
+        return self._verify_outcome(contract)
 
-        try:
-            payload = DeploymentRollbackExecutionVerificationInput.model_validate(request.inputs)
-        except ValidationError as exc:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary=(
-                    "Rollback execution verification inputs do not match the expected schema."
-                ),
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="invalid_rollback_execution_inputs",
-                        message=str(exc),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Repair the rollback execution verification payload before retrying.",
-                ),
-            )
+    def _verify_contract(
+        self,
+        request: VerifierRequest,
+    ) -> DeploymentRollbackExecutionVerificationInput | VerifierResult:
+        name_mismatch = verify_request_name(
+            request=request,
+            definition=self.definition,
+            summary="Verifier request name does not match the rollback execution verifier.",
+        )
+        if name_mismatch is not None:
+            return name_mismatch
 
+        return validate_inputs_model(
+            request=request,
+            model=DeploymentRollbackExecutionVerificationInput,
+            summary="Rollback execution verification inputs do not match the expected schema.",
+            diagnostic_code="invalid_rollback_execution_inputs",
+            retry_reason="Repair the rollback execution verification payload before retrying.",
+        )
+
+    def _verify_outcome(
+        self,
+        payload: DeploymentRollbackExecutionVerificationInput,
+    ) -> VerifierResult:
         if payload.branch is RollbackExecutionBranch.INSUFFICIENT_STATE:
             return self._verify_insufficient_state(payload)
         return self._verify_execution(payload)

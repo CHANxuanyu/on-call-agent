@@ -4,20 +4,27 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from runtime.models import SyntheticFailure
+from runtime.phases import (
+    EVIDENCE_VERIFIER_PHASES,
+    IncidentPhase,
+    require_phase_membership,
+)
 from tools.implementations.evidence_reading import EvidenceReadOutput
 from tools.implementations.follow_up_investigation import InvestigationTarget
 from verifiers.base import (
     VerifierDefinition,
     VerifierDiagnostic,
     VerifierEvidence,
+    VerifierKind,
     VerifierRequest,
     VerifierResult,
     VerifierRetryHint,
     VerifierStatus,
 )
+from verifiers.contracts import validate_inputs_model, verify_request_name
 
 
 class EvidenceReadBranch(StrEnum):
@@ -33,12 +40,22 @@ class EvidenceReadVerificationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     branch: EvidenceReadBranch
-    follow_up_phase: str
+    follow_up_phase: IncidentPhase
     follow_up_verifier_passed: bool
     selected_target: InvestigationTarget | None = None
     insufficiency_reason: str | None = None
     prior_artifact_failure: SyntheticFailure | None = None
     evidence_output: EvidenceReadOutput | None = None
+
+    @field_validator("follow_up_phase")
+    @classmethod
+    def _validate_follow_up_phase(cls, value: IncidentPhase) -> IncidentPhase:
+        return require_phase_membership(
+            phase=value,
+            allowed_phases=EVIDENCE_VERIFIER_PHASES,
+            boundary_name="incident_evidence_read_outcome verifier",
+            phase_label="follow_up_phase",
+        )
 
 
 class EvidenceReadOutcomeVerifier:
@@ -47,6 +64,7 @@ class EvidenceReadOutcomeVerifier:
     @property
     def definition(self) -> VerifierDefinition:
         return VerifierDefinition(
+            kind=VerifierKind.OUTCOME,
             name="incident_evidence_read_outcome",
             description=(
                 "Validate that the evidence-reading step either correctly defers due to missing "
@@ -59,43 +77,32 @@ class EvidenceReadOutcomeVerifier:
         )
 
     async def verify(self, request: VerifierRequest) -> VerifierResult:
-        if request.name != self.definition.name:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Verifier request name does not match the evidence-reading verifier.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="verifier_name_mismatch",
-                        message=(
-                            f"expected verifier '{self.definition.name}' but received "
-                            f"'{request.name}'"
-                        ),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Fix the verifier selection before retrying.",
-                ),
-            )
+        contract = self._verify_contract(request)
+        if isinstance(contract, VerifierResult):
+            return contract
+        return self._verify_outcome(contract)
 
-        try:
-            payload = EvidenceReadVerificationInput.model_validate(request.inputs)
-        except ValidationError as exc:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Evidence-reading verification inputs do not match the expected schema.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="invalid_evidence_read_inputs",
-                        message=str(exc),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Repair the evidence-reading verification payload before retrying.",
-                ),
-            )
+    def _verify_contract(
+        self,
+        request: VerifierRequest,
+    ) -> EvidenceReadVerificationInput | VerifierResult:
+        name_mismatch = verify_request_name(
+            request=request,
+            definition=self.definition,
+            summary="Verifier request name does not match the evidence-reading verifier.",
+        )
+        if name_mismatch is not None:
+            return name_mismatch
 
+        return validate_inputs_model(
+            request=request,
+            model=EvidenceReadVerificationInput,
+            summary="Evidence-reading verification inputs do not match the expected schema.",
+            diagnostic_code="invalid_evidence_read_inputs",
+            retry_reason="Repair the evidence-reading verification payload before retrying.",
+        )
+
+    def _verify_outcome(self, payload: EvidenceReadVerificationInput) -> VerifierResult:
         if payload.branch is EvidenceReadBranch.INSUFFICIENT_STATE:
             return self._verify_insufficient_state(payload)
         return self._verify_evidence_output(payload)
@@ -113,7 +120,7 @@ class EvidenceReadOutcomeVerifier:
                 )
             )
         if (
-            payload.follow_up_phase == "follow_up_investigation_selected"
+            payload.follow_up_phase is IncidentPhase.FOLLOW_UP_INVESTIGATION_SELECTED
             and payload.follow_up_verifier_passed
             and payload.prior_artifact_failure is None
         ):

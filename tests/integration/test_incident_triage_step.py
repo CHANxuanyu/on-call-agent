@@ -11,6 +11,7 @@ from transcripts.models import (
     PermissionDecisionEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -52,8 +53,9 @@ async def test_incident_triage_step_runs_end_to_end_and_persists_artifacts(
     assert isinstance(events[1], PermissionDecisionEvent)
     assert isinstance(events[2], ToolRequestEvent)
     assert isinstance(events[3], ToolResultEvent)
-    assert isinstance(events[4], VerifierResultEvent)
-    assert isinstance(events[5], CheckpointWrittenEvent)
+    assert isinstance(events[4], VerifierRequestEvent)
+    assert isinstance(events[5], VerifierResultEvent)
+    assert isinstance(events[6], CheckpointWrittenEvent)
 
     assert checkpoint.session_id == "session-100"
     assert checkpoint.incident_id == "incident-100"

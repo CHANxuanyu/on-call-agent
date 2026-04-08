@@ -36,6 +36,7 @@ from memory.checkpoints import (
     SessionCheckpoint,
 )
 from runtime.inspect import build_session_payload
+from runtime.phases import APPROVAL_RESOLUTION_ENTRY_PHASES, IncidentPhase
 from transcripts.models import ApprovalResolvedEvent, CheckpointWrittenEvent
 from transcripts.writer import JsonlTranscriptStore
 
@@ -164,6 +165,10 @@ async def resolve_deployment_regression_approval(
     if action_stub is None:
         msg = "approval resolution requires a verified rollback candidate in the session"
         raise ValueError(msg)
+    artifact_context.require_current_phase_in(
+        allowed_phases=APPROVAL_RESOLUTION_ENTRY_PHASES,
+        boundary_name="deployment-regression approval resolution",
+    )
     if artifact_context.checkpoint.approval_state.status is not ApprovalStatus.PENDING:
         msg = "approval resolution requires a session with approval_status=pending"
         raise ValueError(msg)
@@ -198,7 +203,11 @@ async def resolve_deployment_regression_approval(
         checkpoint_id=f"{session_id}-approval-resolution",
         session_id=session_id,
         incident_id=artifact_context.checkpoint.incident_id,
-        current_phase="action_stub_approved" if decision == "approve" else "action_stub_denied",
+        current_phase=(
+            IncidentPhase.ACTION_STUB_APPROVED
+            if decision == "approve"
+            else IncidentPhase.ACTION_STUB_DENIED
+        ),
         current_step=next_step_index,
         selected_skills=artifact_context.checkpoint.selected_skills,
         pending_verifier=None,
@@ -227,7 +236,10 @@ async def resolve_deployment_regression_approval(
             transcript_root=transcript_root,
             checkpoint_root=checkpoint_root,
         ).run(DeploymentRollbackExecutionStepRequest(session_id=session_id))
-        if execution_result.checkpoint.current_phase == "action_execution_completed":
+        if (
+            execution_result.checkpoint.current_phase
+            == IncidentPhase.ACTION_EXECUTION_COMPLETED
+        ):
             await DeploymentOutcomeVerificationStep(
                 transcript_root=transcript_root,
                 checkpoint_root=checkpoint_root,

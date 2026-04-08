@@ -54,7 +54,7 @@ async def test_evidence_read_outcome_verifier_passes_justified_insufficient_stat
             target="incident-500",
             inputs={
                 "branch": EvidenceReadBranch.INSUFFICIENT_STATE,
-                "follow_up_phase": "triage_completed",
+                "follow_up_phase": "follow_up_complete_no_action",
                 "follow_up_verifier_passed": False,
                 "selected_target": None,
                 "insufficiency_reason": (
@@ -67,6 +67,30 @@ async def test_evidence_read_outcome_verifier_passes_justified_insufficient_stat
     )
 
     assert result.status is VerifierStatus.PASS
+
+
+@pytest.mark.asyncio
+async def test_evidence_read_outcome_verifier_rejects_globally_valid_wrong_family_phase(
+) -> None:
+    verifier = EvidenceReadOutcomeVerifier()
+
+    result = await verifier.verify(
+        VerifierRequest(
+            name=verifier.definition.name,
+            target="incident-500",
+            inputs={
+                "branch": EvidenceReadBranch.INSUFFICIENT_STATE,
+                "follow_up_phase": "triage_completed",
+                "follow_up_verifier_passed": False,
+                "selected_target": None,
+                "insufficiency_reason": "No follow-up target exists yet.",
+                "evidence_output": None,
+            },
+        )
+    )
+
+    assert result.status is VerifierStatus.UNVERIFIED
+    assert result.diagnostics[0].code == "invalid_evidence_read_inputs"
 
 
 @pytest.mark.asyncio

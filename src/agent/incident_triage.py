@@ -16,6 +16,11 @@ from memory.checkpoints import (
 )
 from permissions.models import PermissionAction, PermissionDecision
 from permissions.policy import PermissionPolicy
+from runtime.execution import (
+    execute_tool_with_invariants,
+    execute_verifier_with_invariants,
+    normalize_tool_output,
+)
 from skills.loader import SkillLoader
 from tools.implementations.incident_triage import (
     IncidentPayloadSummaryTool,
@@ -29,6 +34,7 @@ from transcripts.models import (
     PermissionDecisionEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -67,6 +73,7 @@ class IncidentTriageStepResult(BaseModel):
 class IncidentTriageStep:
     """Runs one explicit incident-triage step over local, deterministic components."""
 
+    step_name: str = "incident_triage"
     skills_root: Path = Path("skills")
     transcript_root: Path = Path("sessions/transcripts")
     checkpoint_root: Path = Path("sessions/checkpoints")
@@ -125,10 +132,22 @@ class IncidentTriageStep:
                 step_index=1,
                 call_id=call_id,
                 tool_call=tool_call,
+                risk_level=self.tool.definition.risk_level,
             )
         )
 
-        tool_result = await self.tool.execute(tool_call)
+        tool_result = await execute_tool_with_invariants(
+            step_name=self.step_name,
+            tool_name=self.tool.definition.name,
+            execute=lambda: self.tool.execute(tool_call),
+        )
+        verifier_input = tool_result.output or None
+        tool_result, triage_output = normalize_tool_output(
+            step_name=self.step_name,
+            tool_name=self.tool.definition.name,
+            tool_result=tool_result,
+            output_model=IncidentTriageOutput,
+        )
         transcript_store.append(
             ToolResultEvent(
                 session_id=request.session_id,
@@ -142,9 +161,21 @@ class IncidentTriageStep:
         verifier_request = VerifierRequest(
             name=self.verifier.definition.name,
             target=request.incident_id,
-            inputs={"triage_output": tool_result.output},
+            inputs={"triage_output": verifier_input},
         )
-        verifier_result = await self.verifier.verify(verifier_request)
+        transcript_store.append(
+            VerifierRequestEvent(
+                session_id=request.session_id,
+                step_index=1,
+                verifier_name=self.verifier.definition.name,
+                request=verifier_request,
+            )
+        )
+        verifier_result = await execute_verifier_with_invariants(
+            step_name=self.step_name,
+            verifier_name=self.verifier.definition.name,
+            execute=lambda: self.verifier.verify(verifier_request),
+        )
         transcript_store.append(
             VerifierResultEvent(
                 session_id=request.session_id,
@@ -155,7 +186,6 @@ class IncidentTriageStep:
             )
         )
 
-        triage_output = self._parse_triage_output(tool_result)
         checkpoint = SessionCheckpoint(
             checkpoint_id=f"{request.session_id}-incident-triage",
             session_id=request.session_id,
@@ -203,11 +233,6 @@ class IncidentTriageStep:
         """Return the stable checkpoint path for a session."""
 
         return self.checkpoint_root / f"{session_id}.json"
-
-    def _parse_triage_output(self, tool_result: ToolResult) -> IncidentTriageOutput | None:
-        if not tool_result.output:
-            return None
-        return IncidentTriageOutput.model_validate(tool_result.output)
 
     def _current_phase(self, verifier_status: VerifierStatus) -> str:
         if verifier_status is VerifierStatus.PASS:

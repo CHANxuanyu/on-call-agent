@@ -12,7 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from permissions.models import PermissionDecision
-from tools.models import ToolCall, ToolResult
+from tools.models import ToolCall, ToolResult, ToolRiskLevel
 from verifiers.base import VerifierRequest, VerifierResult
 
 
@@ -23,6 +23,7 @@ class TranscriptEventType(StrEnum):
     TOOL_REQUEST = "tool_request"
     TOOL_RESULT = "tool_result"
     PERMISSION_DECISION = "permission_decision"
+    VERIFIER_REQUEST = "verifier_request"
     VERIFIER_RESULT = "verifier_result"
     CHECKPOINT_WRITTEN = "checkpoint_written"
     RESUME_STARTED = "resume_started"
@@ -56,6 +57,15 @@ class ToolRequestEvent(BaseTranscriptEvent):
     event_type: Literal["tool_request"] = "tool_request"
     call_id: str
     tool_call: ToolCall
+    risk_level: ToolRiskLevel | None = None
+
+
+class VerifierRequestEvent(BaseTranscriptEvent):
+    """Request for a verifier execution."""
+
+    event_type: Literal["verifier_request"] = "verifier_request"
+    verifier_name: str
+    request: VerifierRequest
 
 
 class ToolResultEvent(BaseTranscriptEvent):
@@ -114,6 +124,7 @@ TranscriptEvent: TypeAlias = Annotated[
     | ToolRequestEvent
     | ToolResultEvent
     | PermissionDecisionEvent
+    | VerifierRequestEvent
     | VerifierResultEvent
     | CheckpointWrittenEvent
     | ResumeStartedEvent

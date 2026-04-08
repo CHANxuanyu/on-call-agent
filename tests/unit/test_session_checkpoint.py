@@ -6,6 +6,8 @@ from pydantic import ValidationError
 from memory.checkpoints import (
     ApprovalState,
     ApprovalStatus,
+    CheckpointLoadError,
+    JsonCheckpointStore,
     PendingVerifier,
     SessionCheckpoint,
 )
@@ -18,7 +20,7 @@ def test_session_checkpoint_models_resumable_state() -> None:
         checkpoint_id="chk-0001",
         session_id="session-1",
         incident_id="incident-42",
-        current_phase="verification",
+        current_phase="recommendation_supported",
         current_step=5,
         selected_skills=["incident-triage"],
         pending_tool_call=ToolCall(name="read_logs", arguments={"service": "payments-api"}),
@@ -57,9 +59,35 @@ def test_session_checkpoint_rejects_unknown_fields() -> None:
                 "checkpoint_id": "chk-0002",
                 "session_id": "session-2",
                 "incident_id": "incident-43",
-                "current_phase": "triage",
+                "current_phase": "triage_completed",
                 "current_step": 1,
                 "summary_of_progress": "Started triage.",
                 "unexpected_field": "nope",
             }
         )
+
+
+def test_session_checkpoint_rejects_invalid_current_phase() -> None:
+    with pytest.raises(ValidationError):
+        SessionCheckpoint.model_validate(
+            {
+                "checkpoint_id": "chk-0003",
+                "session_id": "session-3",
+                "incident_id": "incident-44",
+                "current_phase": "triage",
+                "current_step": 1,
+                "summary_of_progress": "Started triage.",
+            }
+        )
+
+
+def test_json_checkpoint_store_load_reports_invalid_path_and_payload(
+    tmp_path,
+) -> None:
+    checkpoint_path = tmp_path / "bad-checkpoint.json"
+    checkpoint_path.write_text("{invalid json\n", encoding="utf-8")
+
+    with pytest.raises(CheckpointLoadError) as exc_info:
+        JsonCheckpointStore(checkpoint_path).load()
+
+    assert str(checkpoint_path) in str(exc_info.value)

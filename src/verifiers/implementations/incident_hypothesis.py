@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from runtime.models import SyntheticFailure
+from runtime.phases import (
+    HYPOTHESIS_VERIFIER_PHASES,
+    IncidentPhase,
+    require_phase_membership,
+)
 from tools.implementations.evidence_reading import EvidenceReadOutput
 from tools.implementations.incident_hypothesis import (
     HypothesisConfidence,
@@ -19,11 +24,13 @@ from verifiers.base import (
     VerifierDefinition,
     VerifierDiagnostic,
     VerifierEvidence,
+    VerifierKind,
     VerifierRequest,
     VerifierResult,
     VerifierRetryHint,
     VerifierStatus,
 )
+from verifiers.contracts import validate_inputs_model, verify_request_name
 
 
 class HypothesisBranch(StrEnum):
@@ -39,12 +46,22 @@ class IncidentHypothesisVerificationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     branch: HypothesisBranch
-    evidence_phase: str
+    evidence_phase: IncidentPhase
     evidence_verifier_passed: bool
     insufficiency_reason: str | None = None
     prior_artifact_failure: SyntheticFailure | None = None
     evidence_output: EvidenceReadOutput | None = None
     hypothesis_output: IncidentHypothesisOutput | None = None
+
+    @field_validator("evidence_phase")
+    @classmethod
+    def _validate_evidence_phase(cls, value: IncidentPhase) -> IncidentPhase:
+        return require_phase_membership(
+            phase=value,
+            allowed_phases=HYPOTHESIS_VERIFIER_PHASES,
+            boundary_name="incident_hypothesis_outcome verifier",
+            phase_label="evidence_phase",
+        )
 
 
 class IncidentHypothesisOutcomeVerifier:
@@ -53,6 +70,7 @@ class IncidentHypothesisOutcomeVerifier:
     @property
     def definition(self) -> VerifierDefinition:
         return VerifierDefinition(
+            kind=VerifierKind.OUTCOME,
             name="incident_hypothesis_outcome",
             description=(
                 "Validate that the hypothesis step either correctly defers due to missing "
@@ -65,43 +83,32 @@ class IncidentHypothesisOutcomeVerifier:
         )
 
     async def verify(self, request: VerifierRequest) -> VerifierResult:
-        if request.name != self.definition.name:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Verifier request name does not match the incident-hypothesis verifier.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="verifier_name_mismatch",
-                        message=(
-                            f"expected verifier '{self.definition.name}' but received "
-                            f"'{request.name}'"
-                        ),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Fix the verifier selection before retrying.",
-                ),
-            )
+        contract = self._verify_contract(request)
+        if isinstance(contract, VerifierResult):
+            return contract
+        return self._verify_outcome(contract)
 
-        try:
-            payload = IncidentHypothesisVerificationInput.model_validate(request.inputs)
-        except ValidationError as exc:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Incident-hypothesis verification inputs do not match the expected schema.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="invalid_incident_hypothesis_inputs",
-                        message=str(exc),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Repair the incident-hypothesis verification payload before retrying.",
-                ),
-            )
+    def _verify_contract(
+        self,
+        request: VerifierRequest,
+    ) -> IncidentHypothesisVerificationInput | VerifierResult:
+        name_mismatch = verify_request_name(
+            request=request,
+            definition=self.definition,
+            summary="Verifier request name does not match the incident-hypothesis verifier.",
+        )
+        if name_mismatch is not None:
+            return name_mismatch
 
+        return validate_inputs_model(
+            request=request,
+            model=IncidentHypothesisVerificationInput,
+            summary="Incident-hypothesis verification inputs do not match the expected schema.",
+            diagnostic_code="invalid_incident_hypothesis_inputs",
+            retry_reason="Repair the incident-hypothesis verification payload before retrying.",
+        )
+
+    def _verify_outcome(self, payload: IncidentHypothesisVerificationInput) -> VerifierResult:
         if payload.branch is HypothesisBranch.INSUFFICIENT_STATE:
             return self._verify_insufficient_state(payload)
         return self._verify_hypothesis(payload)
@@ -126,7 +133,7 @@ class IncidentHypothesisOutcomeVerifier:
                 )
             )
         if (
-            payload.evidence_phase == "evidence_reading_completed"
+            payload.evidence_phase is IncidentPhase.EVIDENCE_READING_COMPLETED
             and payload.evidence_verifier_passed
             and payload.prior_artifact_failure is None
         ):

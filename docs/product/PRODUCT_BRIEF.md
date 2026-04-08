@@ -100,10 +100,18 @@ This repository can borrow harness ideas from coding-agent systems, but it must 
 The following product boundaries are mandatory:
 
 - verifier-backed progression remains the primary completion contract
+- verifier execution remains explicitly staged as contract validation, then outcome validation
 - risky or write actions remain approval-gated unless a narrowly defined safe policy explicitly
   allows otherwise
-- checkpoint state, append-only transcripts, and `SessionArtifactContext` remain runtime truth
-- product surfaces must reuse existing runtime artifacts instead of inventing a second state layer
+- the latest committed control truth is the reconciled checkpoint plus its matching
+  `checkpoint_written` transcript boundary, not a checkpoint file in isolation
+- transcript-backed execution history remains explicit, including uncommitted tail state and
+  transcript-backed verifier interruption
+- bounded `IncidentPhase` validation remains in true phase-bearing contract fields; invalid phase
+  fails closed and valid-but-incompatible phase is handled explicitly
+- wrong-step runtime entry must fail closed before new durable writes
+- product surfaces must reuse existing runtime artifacts as thin readers/controllers instead of
+  inventing a second state layer
 - any autonomy must fail closed when evidence, policy, or runtime state is missing or inconsistent
 - the current live product scope remains narrow and incident-family specific
 - operator behavior must stay explicit, inspectable, and auditable
@@ -126,19 +134,24 @@ The following are out of scope unless the product brief is intentionally revised
 Product work must preserve these existing repository assets:
 
 - the explicit incident chain and verifier sequence
+- explicit verifier contract-stage then outcome-stage flow
 - append-only JSONL transcript history
-- resumable checkpoints as control state
+- resumable checkpoints as committed control state
 - `SessionArtifactContext` as the durable recovery and audit seam
+- committed-prefix-only trusted artifact reconstruction from reconciled checkpoint plus transcript
+- transcript-backed `verifier_request` interruption representation and committed-only
+  `pending_verifier` control state
 - approval provenance and approval-resolution artifacts
 - `IncidentWorkingMemory` and derived handoff artifacts
 - replay and eval surfaces
-- the operator shell as a thin wrapper over the same runtime
+- the current operator console and operator shell as thin surfaces over the same runtime truth
 - the current bounded deployment-regression rollback path and outcome verifier
 
 ## Current Productization Phase
 
-The repository is in an early productization phase: a demo-grade ops agent with one real incident
-family, one bounded mitigation, and one operator shell over the runtime.
+The repository is in an early productization phase: a demo-grade incident-response product with one
+real incident family, one bounded mitigation, and thin console plus shell surfaces over the same
+runtime truth.
 
 The next product work should improve operator usability and incident clarity without changing the
 runtime into a broader autonomous system. Productization should make the existing runtime easier to

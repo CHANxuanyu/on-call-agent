@@ -11,6 +11,7 @@ from context.handoff_regeneration import (
 from memory.checkpoints import (
     ApprovalState,
     ApprovalStatus,
+    JsonCheckpointStore,
     OperatorAutonomyMode,
     PendingVerifier,
     SessionCheckpoint,
@@ -69,6 +70,20 @@ def _fake_artifact_context() -> SimpleNamespace:
         working_memory_path=Path("sessions/working_memory/incident-1.json"),
         checkpoint=checkpoint,
         transcript_events=transcript_events,
+        reconciliation=SimpleNamespace(
+            model_dump=lambda mode="json": {
+                "committed_checkpoint_id": "session-1-checkpoint",
+                "committed_event_count": 3,
+                "committed_through_event_id": "event-3",
+                "tail": {
+                    "classification": "clean",
+                    "event_count": 0,
+                    "event_types": [],
+                    "reason": "No post-checkpoint transcript tail is present.",
+                    "details": {},
+                },
+            }
+        ),
         latest_incident_working_memory=lambda: None,
         latest_triage_output=lambda: SimpleNamespace(
             tool_name="incident_payload_summary",
@@ -79,6 +94,7 @@ def _fake_artifact_context() -> SimpleNamespace:
             invalid_output_detail=None,
             synthetic_failure=None,
             output=None,
+            lineage=None,
         ),
         latest_verified_triage_output=lambda: SimpleNamespace(
             is_available=False,
@@ -105,6 +121,7 @@ def _fake_artifact_context() -> SimpleNamespace:
             invalid_output_detail=None,
             synthetic_failure=None,
             output=None,
+            lineage=None,
         ),
         latest_verified_follow_up_output=lambda: SimpleNamespace(
             is_available=False,
@@ -135,6 +152,7 @@ def _fake_artifact_context() -> SimpleNamespace:
             invalid_output_detail=None,
             synthetic_failure=None,
             output=None,
+            lineage=None,
         ),
         latest_verified_evidence_output=lambda: SimpleNamespace(
             is_available=False,
@@ -162,6 +180,7 @@ def _fake_artifact_context() -> SimpleNamespace:
             invalid_output_detail=None,
             synthetic_failure=None,
             output=None,
+            lineage=None,
         ),
         latest_verified_hypothesis_output=lambda: SimpleNamespace(
             is_available=False,
@@ -191,6 +210,7 @@ def _fake_artifact_context() -> SimpleNamespace:
             invalid_output_detail=None,
             synthetic_failure=None,
             output=None,
+            lineage=None,
         ),
         latest_verified_recommendation_output=lambda: SimpleNamespace(
             is_available=False,
@@ -220,6 +240,7 @@ def _fake_artifact_context() -> SimpleNamespace:
             invalid_output_detail=None,
             synthetic_failure=None,
             output=None,
+            lineage=None,
         ),
         latest_verified_action_stub_output=lambda: SimpleNamespace(
             is_available=False,
@@ -243,6 +264,25 @@ def _fake_artifact_context() -> SimpleNamespace:
     )
 
 
+def _fake_visible_tail_artifact_context() -> SimpleNamespace:
+    context = _fake_artifact_context()
+    context.reconciliation = SimpleNamespace(
+        model_dump=lambda mode="json": {
+            "committed_checkpoint_id": "session-1-checkpoint",
+            "committed_event_count": 3,
+            "committed_through_event_id": "event-3",
+            "tail": {
+                "classification": "visible_non_resumable",
+                "event_count": 1,
+                "event_types": ["verifier_request"],
+                "reason": "Verifier request is visible but uncommitted.",
+                "details": {"verifier_name": "incident_recommendation_outcome"},
+            },
+        }
+    )
+    return context
+
+
 def test_inspect_session_json_outputs_checkpoint_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -261,6 +301,23 @@ def test_inspect_session_json_outputs_checkpoint_summary(
     assert payload["current_phase"] == "recommendation_supported"
     assert payload["transcript_event_count"] == 3
     assert payload["working_memory_present"] is False
+
+
+def test_inspect_session_json_surfaces_visible_tail_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "runtime.inspect.SessionArtifactContext.load",
+        lambda *args, **kwargs: _fake_visible_tail_artifact_context(),
+    )
+
+    exit_code = main(["inspect-session", "session-1", "--json"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["reconciliation"]["tail"]["classification"] == "visible_non_resumable"
+    assert payload["reconciliation"]["tail"]["event_types"] == ["verifier_request"]
 
 
 def test_show_audit_json_filters_event_type_and_limit(
@@ -303,6 +360,45 @@ def test_inspect_returns_one_on_load_error(
 
     assert exit_code == 1
     assert "missing session" in capsys.readouterr().err
+
+
+def test_inspect_returns_one_on_invalid_transcript(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    checkpoint_root = tmp_path / "checkpoints"
+    transcript_root = tmp_path / "transcripts"
+    checkpoint_root.mkdir(parents=True, exist_ok=True)
+    transcript_root.mkdir(parents=True, exist_ok=True)
+
+    JsonCheckpointStore(checkpoint_root / "session-invalid.json").write(
+        SessionCheckpoint(
+            checkpoint_id="session-invalid-checkpoint",
+            session_id="session-invalid",
+            incident_id="incident-invalid",
+            current_phase="triage_completed",
+            current_step=1,
+            summary_of_progress="Invalid transcript test checkpoint.",
+        )
+    )
+    (transcript_root / "session-invalid.jsonl").write_text(
+        '{"event_type":"tool_request"\n',
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "inspect-session",
+            "session-invalid",
+            "--checkpoint-root",
+            str(checkpoint_root),
+            "--transcript-root",
+            str(transcript_root),
+        ]
+    )
+
+    assert exit_code == 1
+    assert "line 1" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

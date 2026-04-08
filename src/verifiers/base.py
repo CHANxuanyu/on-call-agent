@@ -18,11 +18,19 @@ class VerifierStatus(StrEnum):
     UNVERIFIED = "unverified"
 
 
+class VerifierKind(StrEnum):
+    """Architectural category for a verifier implementation."""
+
+    CONTRACT = "contract"
+    OUTCOME = "outcome"
+
+
 class VerifierDefinition(BaseModel):
     """Static metadata for a verifier."""
 
     model_config = ConfigDict(extra="forbid")
 
+    kind: VerifierKind
     name: str
     description: str
     target_condition: str

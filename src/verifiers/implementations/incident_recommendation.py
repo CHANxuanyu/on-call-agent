@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from runtime.models import SyntheticFailure
+from runtime.phases import (
+    RECOMMENDATION_VERIFIER_PHASES,
+    IncidentPhase,
+    require_phase_membership,
+)
 from tools.implementations.incident_hypothesis import (
     HypothesisType,
     IncidentHypothesisOutput,
@@ -21,11 +26,13 @@ from verifiers.base import (
     VerifierDefinition,
     VerifierDiagnostic,
     VerifierEvidence,
+    VerifierKind,
     VerifierRequest,
     VerifierResult,
     VerifierRetryHint,
     VerifierStatus,
 )
+from verifiers.contracts import validate_inputs_model, verify_request_name
 
 
 class RecommendationBranch(StrEnum):
@@ -41,12 +48,22 @@ class IncidentRecommendationVerificationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     branch: RecommendationBranch
-    hypothesis_phase: str
+    hypothesis_phase: IncidentPhase
     hypothesis_verifier_passed: bool
     insufficiency_reason: str | None = None
     prior_artifact_failure: SyntheticFailure | None = None
     hypothesis_output: IncidentHypothesisOutput | None = None
     recommendation_output: IncidentRecommendationOutput | None = None
+
+    @field_validator("hypothesis_phase")
+    @classmethod
+    def _validate_hypothesis_phase(cls, value: IncidentPhase) -> IncidentPhase:
+        return require_phase_membership(
+            phase=value,
+            allowed_phases=RECOMMENDATION_VERIFIER_PHASES,
+            boundary_name="incident_recommendation_outcome verifier",
+            phase_label="hypothesis_phase",
+        )
 
 
 class IncidentRecommendationOutcomeVerifier:
@@ -55,6 +72,7 @@ class IncidentRecommendationOutcomeVerifier:
     @property
     def definition(self) -> VerifierDefinition:
         return VerifierDefinition(
+            kind=VerifierKind.OUTCOME,
             name="incident_recommendation_outcome",
             description=(
                 "Validate that the recommendation step either correctly defers due to "
@@ -67,43 +85,35 @@ class IncidentRecommendationOutcomeVerifier:
         )
 
     async def verify(self, request: VerifierRequest) -> VerifierResult:
-        if request.name != self.definition.name:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Verifier request name does not match the recommendation verifier.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="verifier_name_mismatch",
-                        message=(
-                            f"expected verifier '{self.definition.name}' but received "
-                            f"'{request.name}'"
-                        ),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Fix the verifier selection before retrying.",
-                ),
-            )
+        contract = self._verify_contract(request)
+        if isinstance(contract, VerifierResult):
+            return contract
+        return self._verify_outcome(contract)
 
-        try:
-            payload = IncidentRecommendationVerificationInput.model_validate(request.inputs)
-        except ValidationError as exc:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Recommendation verification inputs do not match the expected schema.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="invalid_incident_recommendation_inputs",
-                        message=str(exc),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Repair the recommendation verification payload before retrying.",
-                ),
-            )
+    def _verify_contract(
+        self,
+        request: VerifierRequest,
+    ) -> IncidentRecommendationVerificationInput | VerifierResult:
+        name_mismatch = verify_request_name(
+            request=request,
+            definition=self.definition,
+            summary="Verifier request name does not match the recommendation verifier.",
+        )
+        if name_mismatch is not None:
+            return name_mismatch
 
+        return validate_inputs_model(
+            request=request,
+            model=IncidentRecommendationVerificationInput,
+            summary="Recommendation verification inputs do not match the expected schema.",
+            diagnostic_code="invalid_incident_recommendation_inputs",
+            retry_reason="Repair the recommendation verification payload before retrying.",
+        )
+
+    def _verify_outcome(
+        self,
+        payload: IncidentRecommendationVerificationInput,
+    ) -> VerifierResult:
         if payload.branch is RecommendationBranch.INSUFFICIENT_STATE:
             return self._verify_insufficient_state(payload)
         return self._verify_recommendation(payload)
@@ -128,7 +138,11 @@ class IncidentRecommendationOutcomeVerifier:
                 )
             )
         if (
-            payload.hypothesis_phase in {"hypothesis_supported", "hypothesis_insufficient_evidence"}
+            payload.hypothesis_phase
+            in {
+                IncidentPhase.HYPOTHESIS_SUPPORTED,
+                IncidentPhase.HYPOTHESIS_INSUFFICIENT_EVIDENCE,
+            }
             and payload.hypothesis_verifier_passed
             and payload.prior_artifact_failure is None
         ):

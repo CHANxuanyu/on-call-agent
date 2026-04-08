@@ -23,6 +23,7 @@ from runtime.harness import (
     pending_verifier_for_status,
 )
 from runtime.models import SyntheticFailure
+from runtime.phases import HYPOTHESIS_STEP_ENTRY_PHASES
 from tools.implementations.evidence_reading import EvidenceReadOutput
 from tools.implementations.incident_hypothesis import (
     IncidentHypothesisBuilderTool,
@@ -263,6 +264,10 @@ class IncidentHypothesisStep:
             working_memory_root=self._working_memory_root(),
         )
         artifact_context = harness.artifact_context
+        artifact_context.require_current_phase_in(
+            allowed_phases=HYPOTHESIS_STEP_ENTRY_PHASES,
+            boundary_name="incident_hypothesis step entry",
+        )
         evidence_resolution = artifact_context.evidence_output_for_hypothesis_step()
         evidence_record = artifact_context.latest_evidence_output()
         return _HypothesisResumeContext(

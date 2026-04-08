@@ -159,7 +159,9 @@ oncall-agent shell
 
 ## Operator Surface
 
-The repository has three operator-facing surfaces over the same runtime truth.
+The repository has three operator-facing surfaces over the same runtime truth. They read and act on
+the same reconciled checkpoints, append-only transcripts, `SessionArtifactContext`, verifier
+artifacts, and handoff artifacts; they do not own alternate session state.
 
 - `Operator Console`: a minimal local browser surface over checkpoints, transcripts,
   `SessionArtifactContext`, verification artifacts, and handoff artifacts. It shows recent
@@ -248,14 +250,23 @@ the shell flows, use [Operator Shell Smoke Checklist](docs/operator_shell_smoke_
 
 ## Why This Runtime Is Technically Credible
 
-- verifier-driven progression instead of treating model output as completion
+- verifier-driven progression with explicit contract-stage then outcome-stage verifier flow
 - append-only JSONL transcripts instead of hidden in-memory state
-- resumable checkpoints for control state
+- resumable checkpoints for control state, committed only when reconciled with the matching
+  `checkpoint_written` transcript marker
+- explicit uncommitted transcript tail after the committed checkpoint boundary, with trusted
+  artifact reconstruction from the committed prefix only
+- transcript-backed verifier interruption via `verifier_request`; `pending_verifier` remains
+  committed post-verifier control state only
+- bounded `IncidentPhase` for true phase-bearing contract fields, with fail-closed invalid-phase
+  handling and explicit valid-but-incompatible runtime handling where intentionally preserved
+- wrong-step runtime entry fails closed before new transcript or checkpoint writes
 - `SessionArtifactContext` as the durable recovery and audit seam
 - explicit approval boundaries and approval provenance for risky actions
 - external outcome verification after the one implemented rollback action
 - `IncidentWorkingMemory` and stable handoff artifacts for continuity without replacing runtime
   truth
+- operator console, shell, and direct CLI as thin surfaces over the same runtime truth
 - replay/eval coverage that exercises the real chain and preserves inspectable artifacts
 
 Current durable state seams:

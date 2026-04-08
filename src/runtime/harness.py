@@ -27,6 +27,7 @@ from transcripts.models import (
     ResumeStartedEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -176,6 +177,7 @@ class ResumableSliceHarness:
                 step_index=self.step_index,
                 call_id=call_id,
                 tool_call=tool_call,
+                risk_level=tool.definition.risk_level,
             )
         )
         tool_result = await execute_tool_with_invariants(
@@ -214,6 +216,14 @@ class ResumableSliceHarness:
     ) -> VerifierResult:
         """Run one verifier and record its structured result."""
 
+        self.transcript_store.append(
+            VerifierRequestEvent(
+                session_id=self.session_id,
+                step_index=self.step_index,
+                verifier_name=verifier.definition.name,
+                request=request,
+            )
+        )
         verifier_result = await execute_verifier_with_invariants(
             step_name=self.step_name,
             verifier_name=verifier.definition.name,

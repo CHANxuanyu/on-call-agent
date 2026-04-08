@@ -21,6 +21,16 @@ from runtime.models import (
     SyntheticFailureCode,
     SyntheticFailureSource,
 )
+from runtime.phases import (
+    ACTION_EXECUTION_PHASES,
+    ACTION_STUB_PHASES,
+    EVIDENCE_READING_PHASES,
+    FOLLOW_UP_PHASES,
+    HYPOTHESIS_PHASES,
+    OUTCOME_VERIFICATION_PHASES,
+    RECOMMENDATION_PHASES,
+    TRIAGE_PHASES,
+)
 
 
 class HandoffArtifactRegenerationStatus(StrEnum):
@@ -182,39 +192,24 @@ class IncidentHandoffArtifactRegenerator:
     ) -> tuple[str, ArtifactResolution[Any]] | None:
         phase = artifact_context.checkpoint.current_phase
 
-        if phase == "triage_completed":
+        if phase in TRIAGE_PHASES:
             return "triage", artifact_context.latest_verified_triage_output()
-        if phase == "follow_up_investigation_selected":
+        if phase in FOLLOW_UP_PHASES:
             return "follow_up", artifact_context.latest_verified_follow_up_output()
-        if phase == "evidence_reading_completed":
+        if phase in EVIDENCE_READING_PHASES:
             return "evidence", artifact_context.latest_verified_evidence_output()
-        if phase in {"hypothesis_supported", "hypothesis_insufficient_evidence"}:
+        if phase in HYPOTHESIS_PHASES:
             return "hypothesis", artifact_context.latest_verified_hypothesis_output()
-        if phase in {"recommendation_supported", "recommendation_conservative"}:
+        if phase in RECOMMENDATION_PHASES:
             return "recommendation", artifact_context.latest_verified_recommendation_output()
-        if phase in {
-            "action_stub_pending_approval",
-            "action_stub_not_actionable",
-            "action_stub_approved",
-            "action_stub_denied",
-        }:
+        if phase in ACTION_STUB_PHASES:
             return "action_stub", artifact_context.latest_verified_action_stub_output()
-        if phase in {
-            "action_execution_completed",
-            "action_execution_unverified",
-            "action_execution_failed_verification",
-            "action_execution_failed_artifacts",
-            "action_execution_deferred",
-        }:
+        if phase in ACTION_EXECUTION_PHASES:
             return "action_execution", artifact_context.latest_verified_action_execution_output()
-        if phase in {
-            "outcome_verification_succeeded",
-            "outcome_verification_failed_verification",
-            "outcome_verification_unverified",
-            "outcome_verification_failed_artifacts",
-        }:
+        if phase in OUTCOME_VERIFICATION_PHASES:
             return (
                 "outcome_verification",
                 artifact_context.latest_verified_outcome_verification_output(),
             )
-        return None
+        msg = f"Unhandled current phase during handoff regeneration: {phase.value}"
+        raise ValueError(msg)

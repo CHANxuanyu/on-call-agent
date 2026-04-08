@@ -14,6 +14,7 @@ from transcripts.models import (
     ResumeStartedEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -77,22 +78,23 @@ async def test_incident_evidence_step_reads_evidence_for_selected_target(
     assert result.evidence_output is not None
     assert result.evidence_output.snapshot_id == "deployment-record-2026-04-01"
     assert result.consulted_artifacts.previous_phase == "follow_up_investigation_selected"
-    assert result.consulted_artifacts.prior_transcript_event_count == 13
+    assert result.consulted_artifacts.prior_transcript_event_count == 15
 
-    assert isinstance(events[13], ResumeStartedEvent)
-    assert isinstance(events[14], ModelStepEvent)
-    assert isinstance(events[15], PermissionDecisionEvent)
-    assert isinstance(events[16], ToolRequestEvent)
-    assert isinstance(events[17], ToolResultEvent)
-    assert isinstance(events[18], VerifierResultEvent)
-    assert isinstance(events[19], CheckpointWrittenEvent)
+    assert isinstance(events[15], ResumeStartedEvent)
+    assert isinstance(events[16], ModelStepEvent)
+    assert isinstance(events[17], PermissionDecisionEvent)
+    assert isinstance(events[18], ToolRequestEvent)
+    assert isinstance(events[19], ToolResultEvent)
+    assert isinstance(events[20], VerifierRequestEvent)
+    assert isinstance(events[21], VerifierResultEvent)
+    assert isinstance(events[22], CheckpointWrittenEvent)
 
     assert checkpoint.current_phase == "evidence_reading_completed"
     assert checkpoint.pending_verifier is None
 
 
 @pytest.mark.asyncio
-async def test_incident_evidence_step_records_insufficient_state_when_target_is_missing(
+async def test_incident_evidence_step_rejects_wrong_step_entry_before_any_new_write(
     tmp_path: Path,
 ) -> None:
     repo_root = _repository_root()
@@ -118,27 +120,66 @@ async def test_incident_evidence_step_records_insufficient_state_when_target_is_
     )
     evidence_step.tool.fixtures_path = repo_root / "evals/fixtures/evidence_snapshots.json"
 
-    result = await evidence_step.run(
-        IncidentEvidenceStepRequest(session_id="session-no-target")
+    with pytest.raises(ValueError, match="incident_evidence step entry"):
+        await evidence_step.run(IncidentEvidenceStepRequest(session_id="session-no-target"))
+
+    events = JsonlTranscriptStore(tmp_path / "transcripts" / "session-no-target.jsonl").read_all()
+    checkpoint = JsonCheckpointStore(
+        tmp_path / "checkpoints" / "session-no-target.json"
+    ).load()
+
+    assert len(events) == 7
+    assert checkpoint.current_phase == "triage_completed"
+    assert checkpoint.pending_verifier is None
+
+
+@pytest.mark.asyncio
+async def test_incident_evidence_step_preserves_not_applicable_same_family_runtime_result(
+    tmp_path: Path,
+) -> None:
+    repo_root = _repository_root()
+    triage_step = IncidentTriageStep(
+        skills_root=repo_root / "skills",
+        transcript_root=tmp_path / "transcripts",
+        checkpoint_root=tmp_path / "checkpoints",
+    )
+    await triage_step.run(
+        IncidentTriageStepRequest(
+            session_id="session-no-action-follow-up",
+            incident_id="incident-no-action-follow-up",
+            title="Elevated 5xx errors on payments-api",
+            service="payments-api",
+            symptoms=["spike in 5xx"],
+            impact_summary="Customer checkout requests are failing intermittently.",
+            recent_deployment="deploy-2026-04-01-1",
+            runbook_reference="runbook/payments-api",
+            ownership_team="payments-oncall",
+        )
     )
 
-    events = JsonlTranscriptStore(result.consulted_artifacts.transcript_path).read_all()
+    follow_up_step = IncidentFollowUpStep(
+        transcript_root=tmp_path / "transcripts",
+        checkpoint_root=tmp_path / "checkpoints",
+    )
+    await follow_up_step.run(
+        IncidentFollowUpStepRequest(session_id="session-no-action-follow-up")
+    )
+
+    evidence_step = IncidentEvidenceStep(
+        transcript_root=tmp_path / "transcripts",
+        checkpoint_root=tmp_path / "checkpoints",
+    )
+    evidence_step.tool.fixtures_path = repo_root / "evals/fixtures/evidence_snapshots.json"
+
+    result = await evidence_step.run(
+        IncidentEvidenceStepRequest(session_id="session-no-action-follow-up")
+    )
+
     checkpoint = JsonCheckpointStore(result.checkpoint_path).load()
 
     assert result.resumed_successfully is False
     assert result.branch is EvidenceReadBranch.INSUFFICIENT_STATE
-    assert result.selected_investigation_target is None
-    assert result.runner_status is AgentStatus.VERIFYING
-    assert result.more_follow_up_required is True
-    assert result.verifier_result.status is VerifierStatus.PASS
     assert result.insufficiency_reason is not None
-    assert result.consulted_artifacts.previous_phase == "triage_completed"
-    assert result.consulted_artifacts.prior_transcript_event_count == 6
-
-    assert isinstance(events[6], ResumeStartedEvent)
-    assert isinstance(events[7], ModelStepEvent)
-    assert isinstance(events[8], VerifierResultEvent)
-    assert isinstance(events[9], CheckpointWrittenEvent)
-
-    assert checkpoint.current_phase == "evidence_reading_deferred"
-    assert checkpoint.pending_verifier is None
+    assert result.consulted_artifacts.previous_phase == "follow_up_complete_no_action"
+    assert result.verifier_result.status is VerifierStatus.PASS
+    assert checkpoint.current_phase == "evidence_reading_not_applicable"

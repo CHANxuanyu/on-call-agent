@@ -12,6 +12,7 @@ from context.session_artifacts import SessionArtifactContext
 from memory.checkpoints import JsonCheckpointStore, PendingVerifier, SessionCheckpoint
 from permissions.models import PermissionAction, PermissionDecision
 from permissions.policy import PermissionPolicy
+from runtime.phases import FOLLOW_UP_STEP_ENTRY_PHASES, IncidentPhase
 from tools.implementations.follow_up_investigation import (
     FollowUpInvestigationOutput,
     InvestigationFocusSelectorTool,
@@ -25,6 +26,7 @@ from transcripts.models import (
     ResumeStartedEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -167,6 +169,7 @@ class IncidentFollowUpStep:
                     step_index=step_index,
                     call_id=call_id,
                     tool_call=tool_call,
+                    risk_level=self.tool.definition.risk_level,
                 )
             )
             tool_result = await self.tool.execute(tool_call)
@@ -194,6 +197,14 @@ class IncidentFollowUpStep:
                     else None
                 ),
             },
+        )
+        transcript_store.append(
+            VerifierRequestEvent(
+                session_id=request.session_id,
+                step_index=step_index,
+                verifier_name=self.verifier.definition.name,
+                request=verifier_request,
+            )
         )
         verifier_result = await self.verifier.verify(verifier_request)
         transcript_store.append(
@@ -268,12 +279,16 @@ class IncidentFollowUpStep:
             checkpoint_root=self.checkpoint_root,
             transcript_root=self.transcript_root,
         )
+        artifact_context.require_current_phase_in(
+            allowed_phases=FOLLOW_UP_STEP_ENTRY_PHASES,
+            boundary_name="incident_follow_up step entry",
+        )
         triage_resolution = artifact_context.required_triage_output()
         return _ResumeContext(
             artifact_context=artifact_context,
             triage_output=triage_resolution.artifact,
             triage_was_verified_complete=(
-                artifact_context.phase_is("triage_completed")
+                artifact_context.phase_is(IncidentPhase.TRIAGE_COMPLETED)
                 and artifact_context.has_verified_triage_output()
             ),
             triage_insufficiency_reason=triage_resolution.reason,

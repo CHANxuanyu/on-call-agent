@@ -17,6 +17,7 @@ from context.handoff_regeneration import (
 )
 from memory.checkpoints import JsonCheckpointStore
 from runtime.models import SyntheticFailureCode, SyntheticFailureSource
+from runtime.phases import IncidentPhase
 
 
 def _repository_root() -> Path:
@@ -218,7 +219,7 @@ async def test_handoff_regeneration_fails_when_phase_requires_missing_artifact(
     checkpoint_store = JsonCheckpointStore(checkpoint_path)
     checkpoint = checkpoint_store.load()
     mutated_checkpoint = checkpoint.model_copy(
-        update={"current_phase": "recommendation_supported"}
+        update={"current_phase": IncidentPhase.RECOMMENDATION_SUPPORTED}
     )
     checkpoint_store.write(mutated_checkpoint)
 

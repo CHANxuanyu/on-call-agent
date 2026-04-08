@@ -28,6 +28,7 @@ from transcripts.models import (
     ToolResultEvent,
     TranscriptEvent,
     TranscriptEventType,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 
@@ -60,7 +61,7 @@ def build_session_payload(artifact_context: SessionArtifactContext) -> dict[str,
         "session_id": artifact_context.session_id,
         "incident_id": checkpoint.incident_id,
         "checkpoint_id": checkpoint.checkpoint_id,
-        "current_phase": checkpoint.current_phase,
+        "current_phase": checkpoint.current_phase.value,
         "current_step": checkpoint.current_step,
         "summary_of_progress": checkpoint.summary_of_progress,
         "latest_checkpoint_time": checkpoint.latest_checkpoint_time.isoformat(),
@@ -77,6 +78,7 @@ def build_session_payload(artifact_context: SessionArtifactContext) -> dict[str,
         "checkpoint_path": str(artifact_context.checkpoint_path),
         "transcript_path": str(artifact_context.transcript_path),
         "working_memory_path": str(artifact_context.working_memory_path),
+        "reconciliation": artifact_context.reconciliation.model_dump(mode="json"),
     }
 
 
@@ -106,6 +108,11 @@ def render_session_payload(payload: dict[str, Any]) -> str:
         f"checkpoint_path: {payload['checkpoint_path']}",
         f"transcript_path: {payload['transcript_path']}",
         f"working_memory_path: {payload['working_memory_path']}",
+        (
+            "reconciliation_tail: "
+            f"{payload['reconciliation']['tail']['classification']} "
+            f"({payload['reconciliation']['tail']['event_count']} events)"
+        ),
     ]
     if operator_shell["mode_reason"] is not None:
         lines.insert(9, f"operator_mode_reason: {operator_shell['mode_reason']}")
@@ -132,7 +139,8 @@ def build_artifact_payload(artifact_context: SessionArtifactContext) -> dict[str
     return {
         "session_id": artifact_context.session_id,
         "incident_id": artifact_context.checkpoint.incident_id,
-        "current_phase": artifact_context.checkpoint.current_phase,
+        "current_phase": artifact_context.checkpoint.current_phase.value,
+        "reconciliation": artifact_context.reconciliation.model_dump(mode="json"),
         "stages": stages,
     }
 
@@ -337,6 +345,7 @@ def _record_payload(record: ArtifactRecord[ArtifactOutputT]) -> dict[str, Any]:
         "invalid_output_detail": record.invalid_output_detail,
         "synthetic_failure": _jsonable(record.synthetic_failure),
         "output": _jsonable(record.output),
+        "lineage": _jsonable(record.lineage),
     }
 
 
@@ -387,6 +396,8 @@ def _audit_event_summary(event: TranscriptEvent) -> str:
         return (
             f"permission {event.decision.action.value} for {event.decision.tool_name}"
         )
+    if isinstance(event, VerifierRequestEvent):
+        return f"requested verifier {event.verifier_name}"
     if isinstance(event, VerifierResultEvent):
         return (
             f"verifier {event.verifier_name} returned {event.result.status.value}"

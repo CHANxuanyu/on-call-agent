@@ -24,6 +24,7 @@ from runtime.harness import (
     pending_verifier_for_status,
 )
 from runtime.models import SyntheticFailure
+from runtime.phases import RECOMMENDATION_STEP_ENTRY_PHASES
 from tools.implementations.incident_hypothesis import IncidentHypothesisOutput
 from tools.implementations.incident_recommendation import (
     ALREADY_HEALTHY_ON_KNOWN_GOOD_REF,
@@ -288,6 +289,10 @@ class IncidentRecommendationStep:
             working_memory_root=self._working_memory_root(),
         )
         artifact_context = harness.artifact_context
+        artifact_context.require_current_phase_in(
+            allowed_phases=RECOMMENDATION_STEP_ENTRY_PHASES,
+            boundary_name="incident_recommendation step entry",
+        )
         hypothesis_resolution = artifact_context.hypothesis_output_for_recommendation_step()
         hypothesis_record = artifact_context.latest_hypothesis_output()
         return _RecommendationResumeContext(

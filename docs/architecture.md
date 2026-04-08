@@ -5,8 +5,8 @@
 This repository is a verifier-driven, durable, approval-gated incident-response runtime. It is
 designed to show how an agent harness can be made resumable, auditable, and externally verifiable
 before adding broader automation. The current milestone now includes one narrow live execution path
-for the `deployment-regression` family on a local demo target, plus a thin operator shell over
-that same runtime.
+for the `deployment-regression` family on a local demo target, plus thin operator console and shell
+surfaces over that same runtime truth.
 
 The design borrows mature harness ideas from systems like Claude Code, but it is not a coding
 agent clone. It is an incident-response runtime with narrow, typed, deterministic slices.
@@ -120,6 +120,10 @@ Control state lives in checkpoints:
 Checkpoint state answers: where is the harness, what is it waiting on, and what is the latest
 compact progress marker?
 
+For true phase-bearing contract fields, `current_phase` is bounded by `IncidentPhase` without
+changing serialized phase literals. `pending_verifier` is committed post-verifier control state
+only; it is not an in-flight verifier marker.
+
 Checkpoint is not the place for semantic incident understanding or transcript history.
 
 ### 2. Execution Truth
@@ -134,10 +138,13 @@ Transcript event types currently include:
 - `permission_decision`
 - `tool_request`
 - `tool_result`
+- `verifier_request`
 - `verifier_result`
 - `checkpoint_written`
 
 This layer answers: what actually happened, in what order, and which outputs were verifier-backed?
+Transcript state after the latest committed checkpoint boundary is an explicit uncommitted tail,
+not silently trusted state.
 
 ### 3. Semantic Incident Memory
 
@@ -169,9 +176,12 @@ These are built for readability and handoff, not for resume or verifier control.
 
 The core runtime relationship is:
 
-- checkpoint defines control state
-- transcript preserves append-only execution history
-- `SessionArtifactContext` reconstructs the latest usable durable artifacts from both
+- the latest committed checkpoint truth is the loaded checkpoint file only when it reconciles with
+  the matching `checkpoint_written` transcript marker
+- transcript preserves append-only execution history, including any explicit uncommitted tail after
+  that committed checkpoint boundary
+- `SessionArtifactContext` reconstructs the latest trusted durable artifacts from the committed
+  checkpoint plus the committed transcript prefix through that marker
 
 `SessionArtifactContext` centralizes:
 
@@ -181,12 +191,15 @@ The core runtime relationship is:
 - typed insufficiency reasons
 - typed synthetic failures when a prior artifact chain is malformed, partial, or inconsistent
 
-That removes repeated step-local reconstruction while preserving checkpoint plus transcript as the
-source of truth.
+Trusted artifact reconstruction is committed-prefix-only. Uncommitted tail state is classified
+explicitly and cannot silently override committed truth.
+
+That removes repeated step-local reconstruction while preserving reconciled checkpoint plus
+transcript state as the source of truth.
 
 This is the main durable-state seam for the current repository. The inspection CLI, handoff
 regeneration path, and replay summaries all sit on top of `SessionArtifactContext` instead of
-inventing a second artifact loader.
+inventing a second artifact loader or alternate state owner.
 
 ## Synthetic Failure Invariants
 
@@ -198,7 +211,7 @@ Insufficiency means the chain is conservatively not ready to proceed yet.
 
 Examples:
 
-- checkpoint phase is incompatible with a later slice
+- valid but incompatible checkpoint phase within an intentionally tolerated runtime boundary
 - a required prior verifier has not passed
 
 ### Synthetic Failure
@@ -209,8 +222,9 @@ Examples:
 
 - malformed tool output
 - invalid verifier output
-- missing verifier result where one should exist
+- interrupted verifier execution with a `verifier_request` but no `verifier_result`
 - interrupted step with a `tool_request` but no `tool_result`
+- invalid phase value in a true phase-bearing contract field
 - missing required artifact for a checkpointed phase
 
 Failures are normalized into structured `tool_result` or `verifier_result` artifacts so they stay
@@ -225,7 +239,7 @@ The downstream slices share a thin harness that centralizes:
 - `model_step` emission
 - permission-checked read-only tool execution
 - synthetic failure normalization
-- verifier execution
+- staged verifier execution: `_verify_contract(...)` then `_verify_outcome(...)`
 - checkpoint writing
 
 It does not absorb domain reasoning. Steps still own:
@@ -236,6 +250,9 @@ It does not absorb domain reasoning. Steps still own:
 - how phases and summaries are shaped
 
 This keeps the runtime explicit while reducing duplicated wiring.
+
+Wrong-step runtime entry is now fail-closed before new transcript or checkpoint writes. The harness
+does not normalize wrong-family entry into later deferred checkpoints.
 
 The asymmetry matters:
 

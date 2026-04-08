@@ -24,6 +24,7 @@ from transcripts.models import (
     ResumeStartedEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -114,15 +115,16 @@ async def test_incident_recommendation_step_builds_supported_recommendation(
     assert result.recommendation_output is not None
     assert result.recommendation_output.recommendation_type == "validate_recent_deployment"
     assert result.consulted_artifacts.previous_phase == "hypothesis_supported"
-    assert result.consulted_artifacts.prior_transcript_event_count == 27
+    assert result.consulted_artifacts.prior_transcript_event_count == 31
 
-    assert isinstance(events[27], ResumeStartedEvent)
-    assert isinstance(events[28], ModelStepEvent)
-    assert isinstance(events[29], PermissionDecisionEvent)
-    assert isinstance(events[30], ToolRequestEvent)
-    assert isinstance(events[31], ToolResultEvent)
-    assert isinstance(events[32], VerifierResultEvent)
-    assert isinstance(events[33], CheckpointWrittenEvent)
+    assert isinstance(events[31], ResumeStartedEvent)
+    assert isinstance(events[32], ModelStepEvent)
+    assert isinstance(events[33], PermissionDecisionEvent)
+    assert isinstance(events[34], ToolRequestEvent)
+    assert isinstance(events[35], ToolResultEvent)
+    assert isinstance(events[36], VerifierRequestEvent)
+    assert isinstance(events[37], VerifierResultEvent)
+    assert isinstance(events[38], CheckpointWrittenEvent)
 
     assert checkpoint.current_phase == "recommendation_supported"
     assert checkpoint.pending_verifier is None
@@ -162,7 +164,7 @@ async def test_incident_recommendation_step_builds_conservative_recommendation(
 
 
 @pytest.mark.asyncio
-async def test_incident_recommendation_step_records_insufficient_state_without_hypothesis_record(
+async def test_incident_recommendation_step_rejects_wrong_step_entry_before_any_new_write(
     tmp_path: Path,
 ) -> None:
     repo_root = _repository_root()
@@ -203,30 +205,20 @@ async def test_incident_recommendation_step_records_insufficient_state_without_h
         transcript_root=tmp_path / "transcripts",
         checkpoint_root=tmp_path / "checkpoints",
     )
-    result = await recommendation_step.run(
-        IncidentRecommendationStepRequest(session_id="session-missing-hypothesis")
-    )
+    with pytest.raises(ValueError, match="incident_recommendation step entry"):
+        await recommendation_step.run(
+            IncidentRecommendationStepRequest(session_id="session-missing-hypothesis")
+        )
 
-    events = JsonlTranscriptStore(result.consulted_artifacts.transcript_path).read_all()
-    checkpoint = JsonCheckpointStore(result.checkpoint_path).load()
+    events = JsonlTranscriptStore(
+        tmp_path / "transcripts" / "session-missing-hypothesis.jsonl"
+    ).read_all()
+    checkpoint = JsonCheckpointStore(
+        tmp_path / "checkpoints" / "session-missing-hypothesis.json"
+    ).load()
 
-    assert result.resumed_successfully is False
-    assert result.branch is RecommendationBranch.INSUFFICIENT_STATE
-    assert result.consumed_hypothesis_output is None
-    assert result.runner_status is AgentStatus.VERIFYING
-    assert result.conservative_due_to_insufficient_evidence is None
-    assert result.future_action_requires_approval is None
-    assert result.verifier_result.status is VerifierStatus.PASS
-    assert result.insufficiency_reason is not None
-    assert result.consulted_artifacts.previous_phase == "evidence_reading_completed"
-    assert result.consulted_artifacts.prior_transcript_event_count == 20
-
-    assert isinstance(events[20], ResumeStartedEvent)
-    assert isinstance(events[21], ModelStepEvent)
-    assert isinstance(events[22], VerifierResultEvent)
-    assert isinstance(events[23], CheckpointWrittenEvent)
-
-    assert checkpoint.current_phase == "recommendation_deferred"
+    assert len(events) == 23
+    assert checkpoint.current_phase == "evidence_reading_completed"
     assert checkpoint.pending_verifier is None
 
 
@@ -269,7 +261,7 @@ async def test_incident_recommendation_step_normalizes_malformed_tool_output(
         transcript_root=tmp_path / "transcripts",
     )
 
-    tool_event = events[31]
+    tool_event = events[35]
     assert isinstance(tool_event, ToolResultEvent)
     assert result.recommendation_output is None
     assert result.artifact_failure is not None

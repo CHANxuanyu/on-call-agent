@@ -63,6 +63,19 @@ def test_incident_working_memory_rejects_empty_handoff_note() -> None:
         )
 
 
+def test_incident_working_memory_rejects_invalid_source_phase() -> None:
+    with pytest.raises(ValidationError):
+        IncidentWorkingMemory(
+            incident_id="incident-123",
+            service="payments-api",
+            source_session_id="session-123",
+            source_checkpoint_id="checkpoint-123",
+            source_phase="recommendation",
+            last_updated_by_step="incident_recommendation",
+            compact_handoff_note="Keep investigating.",
+        )
+
+
 def test_incident_working_memory_path_uses_deterministic_incident_filename(
     tmp_path: Path,
 ) -> None:

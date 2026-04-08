@@ -13,6 +13,7 @@ from transcripts.models import (
     ResumeStartedEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -65,13 +66,14 @@ async def test_incident_follow_up_step_no_ops_when_verified_triage_has_no_unknow
     assert result.triage_was_verified_complete is True
     assert result.no_op_reason is not None
     assert result.consulted_artifacts.previous_phase == "triage_completed"
-    assert result.consulted_artifacts.prior_transcript_event_count == 6
+    assert result.consulted_artifacts.prior_transcript_event_count == 7
     assert result.verifier_result.status is VerifierStatus.PASS
 
-    assert isinstance(events[6], ResumeStartedEvent)
-    assert isinstance(events[7], ModelStepEvent)
-    assert isinstance(events[8], VerifierResultEvent)
-    assert isinstance(events[9], CheckpointWrittenEvent)
+    assert isinstance(events[7], ResumeStartedEvent)
+    assert isinstance(events[8], ModelStepEvent)
+    assert isinstance(events[9], VerifierRequestEvent)
+    assert isinstance(events[10], VerifierResultEvent)
+    assert isinstance(events[11], CheckpointWrittenEvent)
 
     assert checkpoint.current_phase == "follow_up_complete_no_action"
     assert checkpoint.pending_verifier is None
@@ -115,15 +117,16 @@ async def test_incident_follow_up_step_investigates_when_unknowns_remain(
     assert result.permission_decision is not None
     assert result.investigation_output is not None
     assert result.verifier_result.status is VerifierStatus.PASS
-    assert result.consulted_artifacts.prior_transcript_event_count == 6
+    assert result.consulted_artifacts.prior_transcript_event_count == 7
 
-    assert isinstance(events[6], ResumeStartedEvent)
-    assert isinstance(events[7], ModelStepEvent)
-    assert isinstance(events[8], PermissionDecisionEvent)
-    assert isinstance(events[9], ToolRequestEvent)
-    assert isinstance(events[10], ToolResultEvent)
-    assert isinstance(events[11], VerifierResultEvent)
-    assert isinstance(events[12], CheckpointWrittenEvent)
+    assert isinstance(events[7], ResumeStartedEvent)
+    assert isinstance(events[8], ModelStepEvent)
+    assert isinstance(events[9], PermissionDecisionEvent)
+    assert isinstance(events[10], ToolRequestEvent)
+    assert isinstance(events[11], ToolResultEvent)
+    assert isinstance(events[12], VerifierRequestEvent)
+    assert isinstance(events[13], VerifierResultEvent)
+    assert isinstance(events[14], CheckpointWrittenEvent)
 
     assert checkpoint.current_phase == "follow_up_investigation_selected"
     assert checkpoint.pending_verifier is None

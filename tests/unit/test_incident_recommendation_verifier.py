@@ -178,3 +178,26 @@ async def test_recommendation_verifier_rejects_insufficient_state_with_verified_
 
     assert result.status is VerifierStatus.FAIL
     assert result.diagnostics[0].code == "verified_hypothesis_missing"
+
+
+@pytest.mark.asyncio
+async def test_recommendation_verifier_rejects_globally_valid_wrong_family_phase() -> None:
+    verifier = IncidentRecommendationOutcomeVerifier()
+
+    result = await verifier.verify(
+        VerifierRequest(
+            name=verifier.definition.name,
+            target="incident-903",
+            inputs={
+                "branch": RecommendationBranch.INSUFFICIENT_STATE,
+                "hypothesis_phase": "evidence_reading_completed",
+                "hypothesis_verifier_passed": False,
+                "insufficiency_reason": "Hypothesis has not been built yet.",
+                "hypothesis_output": None,
+                "recommendation_output": None,
+            },
+        )
+    )
+
+    assert result.status is VerifierStatus.UNVERIFIED
+    assert result.diagnostics[0].code == "invalid_incident_recommendation_inputs"

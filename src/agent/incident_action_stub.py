@@ -22,6 +22,7 @@ from runtime.harness import (
     pending_verifier_for_status,
 )
 from runtime.models import SyntheticFailure
+from runtime.phases import ACTION_STUB_STEP_ENTRY_PHASES
 from tools.implementations.incident_action_stub import (
     IncidentActionStubBuilderTool,
     IncidentActionStubOutput,
@@ -296,6 +297,10 @@ class IncidentActionStubStep:
             transcript_root=self.transcript_root,
         )
         artifact_context = harness.artifact_context
+        artifact_context.require_current_phase_in(
+            allowed_phases=ACTION_STUB_STEP_ENTRY_PHASES,
+            boundary_name="incident_action_stub step entry",
+        )
         recommendation_resolution = artifact_context.recommendation_output_for_action_stub_step()
         recommendation_record = artifact_context.latest_recommendation_output()
         return _ActionStubResumeContext(

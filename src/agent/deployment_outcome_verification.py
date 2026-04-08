@@ -24,6 +24,7 @@ from runtime.harness import (
     pending_verifier_for_status,
 )
 from runtime.models import SyntheticFailure
+from runtime.phases import OUTCOME_VERIFICATION_STEP_ENTRY_PHASES
 from tools.implementations.deployment_outcome_probe import (
     DeploymentOutcomeProbeOutput,
     DeploymentOutcomeProbeTool,
@@ -254,6 +255,10 @@ class DeploymentOutcomeVerificationStep:
             transcript_root=self.transcript_root,
         )
         artifact_context = harness.artifact_context
+        artifact_context.require_current_phase_in(
+            allowed_phases=OUTCOME_VERIFICATION_STEP_ENTRY_PHASES,
+            boundary_name="deployment_outcome_verification step entry",
+        )
         execution_resolution = artifact_context.latest_verified_action_execution_output()
         return _OutcomeVerificationContext(
             harness=harness,

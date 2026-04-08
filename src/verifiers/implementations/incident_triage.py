@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from pydantic import ValidationError
-
 from tools.implementations.incident_triage import IncidentTriageOutput
 from verifiers.base import (
     VerifierDefinition,
     VerifierDiagnostic,
     VerifierEvidence,
+    VerifierKind,
     VerifierRequest,
     VerifierResult,
-    VerifierRetryHint,
     VerifierStatus,
 )
+from verifiers.contracts import validate_required_input_model, verify_request_name
 
 
 class IncidentTriageOutputVerifier:
@@ -22,6 +21,7 @@ class IncidentTriageOutputVerifier:
     @property
     def definition(self) -> VerifierDefinition:
         return VerifierDefinition(
+            kind=VerifierKind.OUTCOME,
             name="incident_triage_output",
             description=(
                 "Validate that triage output includes severity, blast radius, and a next action."
@@ -32,60 +32,37 @@ class IncidentTriageOutputVerifier:
         )
 
     async def verify(self, request: VerifierRequest) -> VerifierResult:
-        if request.name != self.definition.name:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Verifier request name does not match the incident triage verifier.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="verifier_name_mismatch",
-                        message=(
-                            f"expected verifier '{self.definition.name}' but received "
-                            f"'{request.name}'"
-                        ),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Fix the verifier selection before retrying.",
-                ),
-            )
+        contract = self._verify_contract(request)
+        if isinstance(contract, VerifierResult):
+            return contract
+        return self._verify_outcome(contract)
 
-        raw_output = request.inputs.get("triage_output")
-        if raw_output is None:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="No triage output was provided for verification.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="missing_triage_output",
-                        message="request.inputs.triage_output is required",
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Provide triage output before rerunning verification.",
-                ),
-            )
+    def _verify_contract(
+        self,
+        request: VerifierRequest,
+    ) -> IncidentTriageOutput | VerifierResult:
+        name_mismatch = verify_request_name(
+            request=request,
+            definition=self.definition,
+            summary="Verifier request name does not match the incident triage verifier.",
+        )
+        if name_mismatch is not None:
+            return name_mismatch
 
-        try:
-            triage_output = IncidentTriageOutput.model_validate(raw_output)
-        except ValidationError as exc:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Triage output could not be validated against the expected schema.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="invalid_triage_output",
-                        message=str(exc),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Repair the triage output shape before rerunning verification.",
-                ),
-            )
+        return validate_required_input_model(
+            request=request,
+            input_name="triage_output",
+            model=IncidentTriageOutput,
+            missing_summary="No triage output was provided for verification.",
+            missing_diagnostic_code="missing_triage_output",
+            missing_diagnostic_message="request.inputs.triage_output is required",
+            missing_retry_reason="Provide triage output before rerunning verification.",
+            invalid_summary="Triage output could not be validated against the expected schema.",
+            invalid_diagnostic_code="invalid_triage_output",
+            invalid_retry_reason="Repair the triage output shape before rerunning verification.",
+        )
 
+    def _verify_outcome(self, triage_output: IncidentTriageOutput) -> VerifierResult:
         diagnostics: list[VerifierDiagnostic] = []
         if not triage_output.recommended_next_action.startswith(("Inspect", "Review")):
             diagnostics.append(

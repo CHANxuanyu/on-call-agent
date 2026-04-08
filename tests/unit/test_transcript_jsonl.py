@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from permissions.models import (
     EvaluatedActionType,
     PermissionAction,
@@ -15,11 +17,13 @@ from transcripts.models import (
     PermissionDecisionEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
     parse_event,
     serialize_event,
 )
 from transcripts.writer import JsonlTranscriptStore
+from transcripts.writer import TranscriptLoadError
 from verifiers.base import VerifierDiagnostic, VerifierRequest, VerifierResult, VerifierStatus
 
 
@@ -41,6 +45,7 @@ def test_jsonl_transcript_store_round_trips_typed_events(tmp_path: Path) -> None
             step_index=2,
             call_id="tool-1",
             tool_call=ToolCall(name="read_logs", arguments={"service": "payments-api"}),
+            risk_level=ToolRiskLevel.READ_ONLY,
         )
     )
     store.append(
@@ -52,6 +57,18 @@ def test_jsonl_transcript_store_round_trips_typed_events(tmp_path: Path) -> None
             result=ToolResult(
                 status=ToolResultStatus.FAILED,
                 failure=ToolFailure(code="not_found", message="log source unavailable"),
+            ),
+        )
+    )
+    store.append(
+        VerifierRequestEvent(
+            session_id="session-1",
+            step_index=3,
+            verifier_name="api-health-check",
+            request=VerifierRequest(
+                name="api-health-check",
+                target="payments-api",
+                inputs={"endpoint": "/healthz"},
             ),
         )
     )
@@ -80,9 +97,10 @@ def test_jsonl_transcript_store_round_trips_typed_events(tmp_path: Path) -> None
     assert isinstance(events[0], ModelStepEvent)
     assert isinstance(events[1], ToolRequestEvent)
     assert isinstance(events[2], ToolResultEvent)
-    assert isinstance(events[3], VerifierResultEvent)
+    assert isinstance(events[3], VerifierRequestEvent)
+    assert isinstance(events[4], VerifierResultEvent)
     assert events[2].result.failure is not None
-    assert events[3].result.status is VerifierStatus.FAIL
+    assert events[4].result.status is VerifierStatus.FAIL
 
 
 def test_permission_decision_event_round_trips_through_json() -> None:
@@ -116,3 +134,16 @@ def test_permission_decision_event_round_trips_through_json() -> None:
     assert parsed.decision.action is PermissionAction.ALLOW
     assert parsed.decision.provenance.action_category is PermissionActionCategory.TOOL_EXECUTION
     assert parsed.decision.provenance.notes == ["Transcript round-trip test."]
+
+
+def test_jsonl_transcript_store_reports_line_number_for_invalid_event(
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text('{"event_type":"tool_request"\n', encoding="utf-8")
+
+    with pytest.raises(TranscriptLoadError) as exc_info:
+        JsonlTranscriptStore(transcript_path).read_all()
+
+    assert "line 1" in str(exc_info.value)
+    assert str(transcript_path) in str(exc_info.value)

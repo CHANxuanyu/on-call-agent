@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from context.session_artifacts import SessionArtifactContext
 from memory.checkpoints import ApprovalState, ApprovalStatus
 from memory.incident_working_memory import IncidentWorkingMemory
+from runtime.phases import IncidentPhase
 from tools.implementations.deployment_outcome_probe import DeploymentOutcomeProbeOutput
 from tools.implementations.deployment_rollback import DeploymentRollbackExecutionOutput
 from tools.implementations.evidence_reading import EvidenceReadOutput
@@ -59,7 +60,7 @@ class IncidentHandoffContext(BaseModel):
 
     incident_id: str = Field(min_length=1)
     service: str | None = None
-    current_phase: str = Field(min_length=1)
+    current_phase: IncidentPhase
     progress_summary: str = Field(min_length=1)
     leading_hypothesis_summary: str | None = None
     recommendation_summary: str | None = None
@@ -303,7 +304,7 @@ class IncidentHandoffContextAssembler:
     def _unresolved_gaps(
         self,
         *,
-        checkpoint_phase: str,
+        checkpoint_phase: IncidentPhase,
         hypothesis_output: IncidentHypothesisOutput | None,
         outcome_verification_output: DeploymentOutcomeProbeOutput | None,
         working_memory: IncidentWorkingMemory | None,
@@ -314,7 +315,7 @@ class IncidentHandoffContextAssembler:
         ):
             return working_memory.unresolved_gaps
         if (
-            checkpoint_phase == "outcome_verification_succeeded"
+            checkpoint_phase is IncidentPhase.OUTCOME_VERIFICATION_SUCCEEDED
             and outcome_verification_output is not None
         ):
             return []
@@ -428,7 +429,7 @@ class IncidentHandoffContextAssembler:
     def _compact_handoff_note(
         self,
         *,
-        checkpoint_phase: str,
+        checkpoint_phase: IncidentPhase,
         progress_summary: str,
         approval: ApprovalHandoffSummary,
         leading_hypothesis_summary: str | None,

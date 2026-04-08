@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
 from runtime.models import SyntheticFailure
 from tools.implementations.deployment_outcome_probe import DeploymentOutcomeProbeOutput
@@ -12,11 +12,13 @@ from verifiers.base import (
     VerifierDefinition,
     VerifierDiagnostic,
     VerifierEvidence,
+    VerifierKind,
     VerifierRequest,
     VerifierResult,
     VerifierRetryHint,
     VerifierStatus,
 )
+from verifiers.contracts import validate_inputs_model, verify_request_name
 
 
 class OutcomeProbeBranch(StrEnum):
@@ -43,6 +45,7 @@ class DeploymentOutcomeProbeVerifier:
     @property
     def definition(self) -> VerifierDefinition:
         return VerifierDefinition(
+            kind=VerifierKind.OUTCOME,
             name="deployment_outcome_verification",
             description=(
                 "Validate whether the live runtime state indicates successful recovery after a "
@@ -55,43 +58,35 @@ class DeploymentOutcomeProbeVerifier:
         )
 
     async def verify(self, request: VerifierRequest) -> VerifierResult:
-        if request.name != self.definition.name:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Verifier request name does not match the outcome probe verifier.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="verifier_name_mismatch",
-                        message=(
-                            f"expected verifier '{self.definition.name}' but received "
-                            f"'{request.name}'"
-                        ),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Fix the verifier selection before retrying.",
-                ),
-            )
+        contract = self._verify_contract(request)
+        if isinstance(contract, VerifierResult):
+            return contract
+        return self._verify_outcome(contract)
 
-        try:
-            payload = DeploymentOutcomeVerificationInput.model_validate(request.inputs)
-        except ValidationError as exc:
-            return VerifierResult(
-                status=VerifierStatus.UNVERIFIED,
-                summary="Outcome probe verification inputs do not match the expected schema.",
-                diagnostics=[
-                    VerifierDiagnostic(
-                        code="invalid_outcome_probe_inputs",
-                        message=str(exc),
-                    )
-                ],
-                retry_hint=VerifierRetryHint(
-                    should_retry=False,
-                    reason="Repair the outcome probe verification payload before retrying.",
-                ),
-            )
+    def _verify_contract(
+        self,
+        request: VerifierRequest,
+    ) -> DeploymentOutcomeVerificationInput | VerifierResult:
+        name_mismatch = verify_request_name(
+            request=request,
+            definition=self.definition,
+            summary="Verifier request name does not match the outcome probe verifier.",
+        )
+        if name_mismatch is not None:
+            return name_mismatch
 
+        return validate_inputs_model(
+            request=request,
+            model=DeploymentOutcomeVerificationInput,
+            summary="Outcome probe verification inputs do not match the expected schema.",
+            diagnostic_code="invalid_outcome_probe_inputs",
+            retry_reason="Repair the outcome probe verification payload before retrying.",
+        )
+
+    def _verify_outcome(
+        self,
+        payload: DeploymentOutcomeVerificationInput,
+    ) -> VerifierResult:
         if payload.branch is OutcomeProbeBranch.INSUFFICIENT_STATE:
             return self._verify_insufficient_state(payload)
         return self._verify_probe_output(payload)
@@ -101,10 +96,10 @@ class DeploymentOutcomeProbeVerifier:
         payload: DeploymentOutcomeVerificationInput,
     ) -> VerifierResult:
         return VerifierResult(
-            status=VerifierStatus.PASS,
+            status=VerifierStatus.UNVERIFIED,
             summary=(
-                "Outcome verification correctly deferred because no verified rollback execution "
-                "artifact is available yet."
+                "Outcome verification could not run because the verified rollback execution "
+                "preconditions were not present."
             ),
             evidence=[
                 VerifierEvidence(
@@ -122,6 +117,13 @@ class DeploymentOutcomeProbeVerifier:
                 ]
                 if payload.prior_artifact_failure is not None
                 else []
+            ),
+            retry_hint=VerifierRetryHint(
+                should_retry=False,
+                reason=(
+                    "Restore the verified rollback execution preconditions before retrying "
+                    "outcome verification."
+                ),
             ),
         )
 

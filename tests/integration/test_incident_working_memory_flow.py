@@ -3,7 +3,10 @@ from typing import cast
 
 import pytest
 
-from agent.deployment_outcome_verification import DeploymentOutcomeVerificationStep
+from agent.deployment_outcome_verification import (
+    DeploymentOutcomeVerificationStep,
+    DeploymentOutcomeVerificationStepRequest,
+)
 from agent.incident_evidence import IncidentEvidenceStep, IncidentEvidenceStepRequest
 from agent.incident_follow_up import IncidentFollowUpStep, IncidentFollowUpStepRequest
 from agent.incident_hypothesis import IncidentHypothesisStep, IncidentHypothesisStepRequest
@@ -324,3 +327,46 @@ async def test_outcome_verification_success_rewrites_working_memory_with_resolve
     assert memory_after_success.recommendation is not None
     assert memory_after_success.recommendation.more_investigation_required is False
     assert "Outcome verification passed" in memory_after_success.compact_handoff_note
+
+
+@pytest.mark.asyncio
+async def test_outcome_verification_insufficient_state_is_not_success_like(
+    tmp_path: Path,
+) -> None:
+    session_id = "session-working-memory-outcome-insufficient"
+    incident_id = "incident-working-memory-outcome-insufficient"
+    await _run_chain_to_hypothesis(
+        tmp_path,
+        session_id=session_id,
+        incident_id=incident_id,
+    )
+
+    recommendation_step = IncidentRecommendationStep(
+        transcript_root=tmp_path / "transcripts",
+        checkpoint_root=tmp_path / "checkpoints",
+    )
+    await recommendation_step.run(
+        IncidentRecommendationStepRequest(session_id=session_id)
+    )
+
+    store = JsonIncidentWorkingMemoryStore.for_incident(
+        incident_id,
+        root=tmp_path / "working_memory",
+    )
+    memory_before = store.load()
+
+    outcome_step = DeploymentOutcomeVerificationStep(
+        transcript_root=tmp_path / "transcripts",
+        checkpoint_root=tmp_path / "checkpoints",
+    )
+    with pytest.raises(
+        ValueError,
+        match="deployment_outcome_verification step entry",
+    ):
+        await outcome_step.run(
+            DeploymentOutcomeVerificationStepRequest(session_id=session_id)
+        )
+
+    memory_after = store.load()
+
+    assert memory_after == memory_before

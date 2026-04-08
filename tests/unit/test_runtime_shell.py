@@ -63,22 +63,57 @@ def _write_session_checkpoint(
     transcript_root = tmp_path / "transcripts"
     checkpoint_root.mkdir(parents=True, exist_ok=True)
     transcript_root.mkdir(parents=True, exist_ok=True)
-    JsonCheckpointStore(checkpoint_root / f"{session_id}.json").write(
-        SessionCheckpoint(
-            checkpoint_id=f"{session_id}-checkpoint",
-            session_id=session_id,
-            incident_id=incident_id,
-            current_phase=current_phase,
-            current_step=6,
-            selected_skills=["incident-triage"],
-            approval_state=approval_state or ApprovalState(status=ApprovalStatus.NONE),
-            operator_shell=operator_shell or OperatorShellState(),
-            latest_checkpoint_time=latest_checkpoint_time
-            or datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
-            summary_of_progress=summary_of_progress,
-        )
+    checkpoint = SessionCheckpoint(
+        checkpoint_id=f"{session_id}-checkpoint",
+        session_id=session_id,
+        incident_id=incident_id,
+        current_phase=current_phase,
+        current_step=6,
+        selected_skills=["incident-triage"],
+        approval_state=approval_state or ApprovalState(status=ApprovalStatus.NONE),
+        operator_shell=operator_shell or OperatorShellState(),
+        latest_checkpoint_time=latest_checkpoint_time
+        or datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
+        summary_of_progress=summary_of_progress,
     )
-    (transcript_root / f"{session_id}.jsonl").write_text("", encoding="utf-8")
+    JsonCheckpointStore(checkpoint_root / f"{session_id}.json").write(checkpoint)
+    _rewrite_transcript_with_current_checkpoint(tmp_path, session_id=session_id, events=[])
+
+
+def _rewrite_transcript_with_current_checkpoint(
+    tmp_path: Path,
+    *,
+    session_id: str,
+    events: list[object],
+) -> None:
+    checkpoint = JsonCheckpointStore(tmp_path / "checkpoints" / f"{session_id}.json").load()
+    transcript_path = tmp_path / "transcripts" / f"{session_id}.jsonl"
+    existing_events: tuple[object, ...] = ()
+    if transcript_path.exists() and transcript_path.read_text(encoding="utf-8").strip():
+        existing_events = JsonlTranscriptStore(transcript_path).read_all()
+    retained_events = [
+        event
+        for event in existing_events
+        if not (
+            isinstance(event, CheckpointWrittenEvent)
+            and event.checkpoint_id == checkpoint.checkpoint_id
+        )
+    ]
+    transcript_path.write_text("", encoding="utf-8")
+    store = JsonlTranscriptStore(transcript_path)
+    for event in [
+        *retained_events,
+        *events,
+        CheckpointWrittenEvent(
+            session_id=session_id,
+            step_index=checkpoint.current_step,
+            timestamp=checkpoint.latest_checkpoint_time,
+            checkpoint_id=checkpoint.checkpoint_id,
+            checkpoint_path=tmp_path / "checkpoints" / f"{session_id}.json",
+            summary_of_progress=checkpoint.summary_of_progress,
+        ),
+    ]:
+        store.append(event)
 
 
 def _append_transcript_events(
@@ -87,9 +122,11 @@ def _append_transcript_events(
     session_id: str,
     events: list[object],
 ) -> None:
-    store = JsonlTranscriptStore(tmp_path / "transcripts" / f"{session_id}.jsonl")
-    for event in events:
-        store.append(event)
+    _rewrite_transcript_with_current_checkpoint(
+        tmp_path,
+        session_id=session_id,
+        events=events,
+    )
 
 
 def _deployment_triage_request_event(
@@ -479,14 +516,6 @@ def test_tail_renders_recent_operator_activity(tmp_path: Path) -> None:
         tmp_path,
         session_id=session_id,
         events=[
-            CheckpointWrittenEvent(
-                session_id=session_id,
-                step_index=5,
-                timestamp=datetime(2026, 4, 5, 12, 1, tzinfo=UTC),
-                checkpoint_id=f"{session_id}-checkpoint-5",
-                checkpoint_path=tmp_path / "checkpoints" / f"{session_id}.json",
-                summary_of_progress="Rollback candidate is pending approval.",
-            ),
             ApprovalResolvedEvent(
                 session_id=session_id,
                 step_index=6,
@@ -524,11 +553,11 @@ def test_tail_renders_recent_operator_activity(tmp_path: Path) -> None:
     )
     shell.current_session_id = session_id
 
-    should_exit = shell.handle_line("/tail --limit 2")
+    should_exit = shell.handle_line("/tail --limit 3")
 
     assert should_exit is False
     output = stdout.getvalue()
     assert "approval approved for rollback_recent_deployment_candidate" in output
     assert "verifier deployment_outcome_verification=pass" in output
-    assert "checkpoint: Rollback candidate is pending approval." not in output
+    assert "checkpoint: Stable checkpoint for shell tests." in output
     assert stderr.getvalue() == ""

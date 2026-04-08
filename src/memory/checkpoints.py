@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import UTC, datetime
 from enum import StrEnum
+from json import JSONDecodeError
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from runtime.phases import IncidentPhase
 from tools.models import ToolCall
 from verifiers.base import VerifierRequest
 
@@ -83,7 +87,7 @@ class SessionCheckpoint(BaseModel):
     checkpoint_id: str
     session_id: str
     incident_id: str
-    current_phase: str
+    current_phase: IncidentPhase
     current_step: int
     selected_skills: list[str] = Field(default_factory=list)
     pending_tool_call: ToolCall | None = None
@@ -94,6 +98,14 @@ class SessionCheckpoint(BaseModel):
     summary_of_progress: str = Field(min_length=1)
 
 
+class CheckpointStoreError(ValueError):
+    """Base error for checkpoint persistence failures."""
+
+
+class CheckpointLoadError(CheckpointStoreError):
+    """Raised when a checkpoint cannot be loaded safely."""
+
+
 class JsonCheckpointStore:
     """Simple local JSON checkpoint store for resumable session state."""
 
@@ -102,12 +114,34 @@ class JsonCheckpointStore:
 
     def write(self, checkpoint: SessionCheckpoint) -> Path:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(checkpoint.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        payload = json.dumps(
+            checkpoint.model_dump(mode="json"),
+            indent=2,
+            sort_keys=True,
+        ) + "\n"
+        with tempfile.NamedTemporaryFile(
+            "w",
             encoding="utf-8",
-        )
+            dir=self.path.parent,
+            prefix=f".{self.path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, self.path)
         return self.path
 
     def load(self) -> SessionCheckpoint:
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
-        return SessionCheckpoint.model_validate(payload)
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            return SessionCheckpoint.model_validate(payload)
+        except FileNotFoundError:
+            raise
+        except (JSONDecodeError, ValidationError) as exc:
+            msg = f"invalid checkpoint file at {self.path}: {exc}"
+            raise CheckpointLoadError(msg) from exc
+        except OSError:
+            raise

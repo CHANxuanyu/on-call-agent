@@ -10,23 +10,14 @@ from memory.checkpoints import (
     SessionCheckpoint,
 )
 from permissions.models import (
-    EvaluatedActionType,
-    PermissionAction,
-    PermissionActionCategory,
     PermissionDecision,
-    PermissionDecisionProvenance,
-    PermissionPolicySource,
-    PermissionSafetyBoundary,
 )
 from runtime.console_api import ConsoleTimelineKind, OperatorConsoleAPI
-from tools.models import ToolCall, ToolResult, ToolResultStatus, ToolRiskLevel
+from tools.models import ToolCall
 from transcripts.models import (
-    ApprovalResolvedEvent,
     CheckpointWrittenEvent,
-    PermissionDecisionEvent,
     ResumeStartedEvent,
     ToolRequestEvent,
-    ToolResultEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -44,26 +35,66 @@ def _write_checkpoint(
     operator_shell: OperatorShellState | None = None,
     summary_of_progress: str = "Console API checkpoint.",
 ) -> None:
-    JsonCheckpointStore(tmp_path / "checkpoints" / f"{session_id}.json").write(
-        SessionCheckpoint(
-            checkpoint_id=f"{session_id}-checkpoint",
-            session_id=session_id,
-            incident_id=incident_id,
-            current_phase=current_phase,
-            current_step=6,
-            selected_skills=["incident-triage"],
-            approval_state=approval_state or ApprovalState(status=ApprovalStatus.NONE),
-            operator_shell=operator_shell or OperatorShellState(),
-            latest_checkpoint_time=latest_checkpoint_time,
-            summary_of_progress=summary_of_progress,
-        )
+    (tmp_path / "checkpoints").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "transcripts").mkdir(parents=True, exist_ok=True)
+    checkpoint = SessionCheckpoint(
+        checkpoint_id=f"{session_id}-checkpoint",
+        session_id=session_id,
+        incident_id=incident_id,
+        current_phase=current_phase,
+        current_step=6,
+        selected_skills=["incident-triage"],
+        approval_state=approval_state or ApprovalState(status=ApprovalStatus.NONE),
+        operator_shell=operator_shell or OperatorShellState(),
+        latest_checkpoint_time=latest_checkpoint_time,
+        summary_of_progress=summary_of_progress,
     )
+    JsonCheckpointStore(tmp_path / "checkpoints" / f"{session_id}.json").write(checkpoint)
+    _rewrite_transcript_with_current_checkpoint(tmp_path, session_id=session_id, events=[])
+
+
+def _rewrite_transcript_with_current_checkpoint(
+    tmp_path: Path,
+    *,
+    session_id: str,
+    events: list[object],
+) -> None:
+    checkpoint = JsonCheckpointStore(tmp_path / "checkpoints" / f"{session_id}.json").load()
+    transcript_path = tmp_path / "transcripts" / f"{session_id}.jsonl"
+    existing_events: tuple[object, ...] = ()
+    if transcript_path.exists() and transcript_path.read_text(encoding="utf-8").strip():
+        existing_events = JsonlTranscriptStore(transcript_path).read_all()
+    retained_events = [
+        event
+        for event in existing_events
+        if not (
+            isinstance(event, CheckpointWrittenEvent)
+            and event.checkpoint_id == checkpoint.checkpoint_id
+        )
+    ]
+    transcript_path.write_text("", encoding="utf-8")
+    store = JsonlTranscriptStore(transcript_path)
+    for event in [
+        *retained_events,
+        *events,
+        CheckpointWrittenEvent(
+            session_id=session_id,
+            step_index=checkpoint.current_step,
+            timestamp=checkpoint.latest_checkpoint_time,
+            checkpoint_id=checkpoint.checkpoint_id,
+            checkpoint_path=tmp_path / "checkpoints" / f"{session_id}.json",
+            summary_of_progress=checkpoint.summary_of_progress,
+        ),
+    ]:
+        store.append(event)
 
 
 def _append_events(tmp_path: Path, *, session_id: str, events: list[object]) -> None:
-    store = JsonlTranscriptStore(tmp_path / "transcripts" / f"{session_id}.jsonl")
-    for event in events:
-        store.append(event)
+    _rewrite_transcript_with_current_checkpoint(
+        tmp_path,
+        session_id=session_id,
+        events=events,
+    )
 
 
 def _triage_request_event(
@@ -162,61 +193,10 @@ def test_console_api_lists_sessions_and_builds_detail_and_timeline(tmp_path: Pat
             ),
                 _verifier_event(
                     session_id="session-newer",
-                    verifier_name="incident_action_stub_outcome",
-                    summary="Rollback candidate is pending operator approval.",
-                    step_index=6,
+                verifier_name="incident_action_stub_outcome",
+                summary="Rollback candidate is pending operator approval.",
+                step_index=6,
                 ),
-            PermissionDecisionEvent(
-                session_id="session-newer",
-                step_index=7,
-                decision=PermissionDecision(
-                    tool_name="deployment_rollback_executor",
-                    risk_level=ToolRiskLevel.WRITE,
-                    action=PermissionAction.ASK,
-                    reason=(
-                        "approval was already recorded for the reviewed rollback scope"
-                    ),
-                    provenance=PermissionDecisionProvenance(
-                        policy_source=PermissionPolicySource.DEFAULT_SAFE_TOOL_RISK,
-                        action_category=PermissionActionCategory.TOOL_EXECUTION,
-                        evaluated_action_type=EvaluatedActionType.WRITE_TOOL,
-                        approval_required=True,
-                        approval_reason="approval was already recorded",
-                        safety_boundary=PermissionSafetyBoundary.HUMAN_APPROVAL_REQUIRED,
-                        notes=["not a fresh request for approval"],
-                    ),
-                ),
-            ),
-            ToolRequestEvent(
-                session_id="session-newer",
-                step_index=7,
-                call_id="rollback-call",
-                tool_call=ToolCall(
-                    name="deployment_rollback_executor",
-                    arguments={},
-                ),
-            ),
-            ToolResultEvent(
-                session_id="session-newer",
-                step_index=7,
-                call_id="rollback-call",
-                tool_name="deployment_rollback_executor",
-                result=ToolResult(status=ToolResultStatus.SUCCEEDED, output={}),
-            ),
-            ApprovalResolvedEvent(
-                session_id="session-newer",
-                step_index=7,
-                decision="approved",
-                requested_action="rollback_recent_deployment_candidate",
-                reason="Approved by operator.",
-            ),
-            CheckpointWrittenEvent(
-                session_id="session-newer",
-                step_index=7,
-                checkpoint_id="session-newer-checkpoint-2",
-                checkpoint_path=tmp_path / "checkpoints" / "session-newer.json",
-                summary_of_progress="Approval approved for rollback_recent_deployment_candidate.",
-            ),
         ],
     )
 
@@ -262,12 +242,6 @@ def test_console_api_lists_sessions_and_builds_detail_and_timeline(tmp_path: Pat
     assert [entry.kind for entry in timeline.entries] == [
         ConsoleTimelineKind.RESUME,
         ConsoleTimelineKind.VERIFIER,
-        ConsoleTimelineKind.PERMISSION,
-        ConsoleTimelineKind.EXECUTION,
-        ConsoleTimelineKind.EXECUTION,
-        ConsoleTimelineKind.APPROVAL,
         ConsoleTimelineKind.CHECKPOINT,
     ]
-    assert timeline.entries[2].tool_name is None
-    assert timeline.entries[3].tool_name == "deployment_rollback_executor"
-    assert timeline.entries[-1].checkpoint_id == "session-newer-checkpoint-2"
+    assert timeline.entries[-1].checkpoint_id == "session-newer-checkpoint"

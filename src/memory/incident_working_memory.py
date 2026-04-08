@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from runtime.phases import IncidentPhase
 from tools.implementations.incident_hypothesis import HypothesisType
 from tools.implementations.incident_recommendation import (
     RecommendationApprovalLevel,
@@ -46,7 +47,7 @@ class IncidentWorkingMemory(BaseModel):
     service: str = Field(min_length=1)
     source_session_id: str = Field(min_length=1)
     source_checkpoint_id: str = Field(min_length=1)
-    source_phase: str = Field(min_length=1)
+    source_phase: IncidentPhase
     last_updated_by_step: str = Field(min_length=1)
     last_updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     leading_hypothesis: LeadingHypothesisSnapshot | None = None

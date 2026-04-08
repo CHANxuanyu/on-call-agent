@@ -1,7 +1,7 @@
 import pytest
 
 from tools.implementations.incident_triage import IncidentSeverity, IncidentTriageOutput
-from verifiers.base import VerifierRequest, VerifierStatus
+from verifiers.base import VerifierKind, VerifierRequest, VerifierStatus
 from verifiers.implementations.incident_triage import IncidentTriageOutputVerifier
 
 
@@ -53,3 +53,20 @@ async def test_incident_triage_output_verifier_fails_on_non_actionable_next_step
 
     assert result.status is VerifierStatus.FAIL
     assert result.diagnostics[0].code == "non_actionable_next_step"
+
+
+@pytest.mark.asyncio
+async def test_incident_triage_output_verifier_reports_missing_contract_input() -> None:
+    verifier = IncidentTriageOutputVerifier()
+
+    result = await verifier.verify(
+        VerifierRequest(
+            name=verifier.definition.name,
+            target="incident-102",
+            inputs={},
+        )
+    )
+
+    assert verifier.definition.kind is VerifierKind.OUTCOME
+    assert result.status is VerifierStatus.UNVERIFIED
+    assert result.diagnostics[0].code == "missing_triage_output"

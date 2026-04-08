@@ -33,7 +33,12 @@ from tools.implementations.incident_recommendation import (
     RecommendationType,
 )
 from tools.models import ToolCall, ToolResult, ToolResultStatus
-from transcripts.models import ToolRequestEvent, ToolResultEvent, VerifierResultEvent
+from transcripts.models import (
+    CheckpointWrittenEvent,
+    ToolRequestEvent,
+    ToolResultEvent,
+    VerifierResultEvent,
+)
 from transcripts.writer import JsonlTranscriptStore
 from verifiers.base import VerifierRequest, VerifierResult, VerifierStatus
 
@@ -49,22 +54,23 @@ def _write_pending_deployment_session(
     checkpoint_root.mkdir(parents=True, exist_ok=True)
     transcript_root.mkdir(parents=True, exist_ok=True)
 
-    JsonCheckpointStore(checkpoint_root / f"{session_id}.json").write(
-        SessionCheckpoint(
-            checkpoint_id=f"{session_id}-checkpoint",
-            session_id=session_id,
-            incident_id=incident_id,
-            current_phase="action_stub_pending_approval",
-            current_step=6,
-            selected_skills=["incident-triage"],
-            approval_state=ApprovalState(
-                status=ApprovalStatus.PENDING,
-                requested_action="rollback_recent_deployment_candidate",
-                reason="Operator review required for rollback.",
-            ),
-            latest_checkpoint_time=datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
-            summary_of_progress="Rollback candidate is pending approval.",
-        )
+    checkpoint = SessionCheckpoint(
+        checkpoint_id=f"{session_id}-checkpoint",
+        session_id=session_id,
+        incident_id=incident_id,
+        current_phase="action_stub_pending_approval",
+        current_step=6,
+        selected_skills=["incident-triage"],
+        approval_state=ApprovalState(
+            status=ApprovalStatus.PENDING,
+            requested_action="rollback_recent_deployment_candidate",
+            reason="Operator review required for rollback.",
+        ),
+        latest_checkpoint_time=datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
+        summary_of_progress="Rollback candidate is pending approval.",
+    )
+    checkpoint_path = JsonCheckpointStore(checkpoint_root / f"{session_id}.json").write(
+        checkpoint
     )
 
     evidence_output = EvidenceReadOutput(
@@ -234,6 +240,15 @@ def _write_pending_deployment_session(
         verifier_name="incident_action_stub_outcome",
         output=action_stub_output.model_dump(mode="json"),
         summary="Rollback candidate is pending operator approval.",
+    )
+    store.append(
+        CheckpointWrittenEvent(
+            session_id=session_id,
+            step_index=6,
+            checkpoint_id=checkpoint.checkpoint_id,
+            checkpoint_path=checkpoint_path,
+            summary_of_progress=checkpoint.summary_of_progress,
+        )
     )
 
 

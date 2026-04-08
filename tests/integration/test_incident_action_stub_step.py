@@ -30,6 +30,7 @@ from transcripts.models import (
     ResumeStartedEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -148,19 +149,20 @@ async def test_incident_action_stub_step_builds_approval_gated_candidate(
         is PermissionSafetyBoundary.READ_ONLY_ONLY
     )
     assert result.consulted_artifacts.previous_phase == "recommendation_supported"
-    assert result.consulted_artifacts.prior_transcript_event_count == 34
+    assert result.consulted_artifacts.prior_transcript_event_count == 39
 
-    assert isinstance(events[34], ResumeStartedEvent)
-    assert isinstance(events[35], ModelStepEvent)
-    assert isinstance(events[36], PermissionDecisionEvent)
-    assert isinstance(events[37], ToolRequestEvent)
-    assert isinstance(events[38], ToolResultEvent)
-    assert isinstance(events[39], VerifierResultEvent)
-    assert isinstance(events[40], CheckpointWrittenEvent)
+    assert isinstance(events[39], ResumeStartedEvent)
+    assert isinstance(events[40], ModelStepEvent)
+    assert isinstance(events[41], PermissionDecisionEvent)
+    assert isinstance(events[42], ToolRequestEvent)
+    assert isinstance(events[43], ToolResultEvent)
+    assert isinstance(events[44], VerifierRequestEvent)
+    assert isinstance(events[45], VerifierResultEvent)
+    assert isinstance(events[46], CheckpointWrittenEvent)
 
     assert checkpoint.current_phase == "action_stub_pending_approval"
     assert checkpoint.approval_state.status is ApprovalStatus.PENDING
-    permission_event = events[36]
+    permission_event = events[41]
     assert isinstance(permission_event, PermissionDecisionEvent)
     assert (
         permission_event.decision.provenance.policy_source
@@ -225,7 +227,7 @@ async def test_incident_action_stub_step_builds_no_actionable_outcome(
 
 
 @pytest.mark.asyncio
-async def test_incident_action_stub_step_records_insufficient_state_without_recommendation(
+async def test_incident_action_stub_step_rejects_wrong_step_entry_before_any_new_write(
     tmp_path: Path,
 ) -> None:
     repo_root = _repository_root()
@@ -274,29 +276,19 @@ async def test_incident_action_stub_step_records_insufficient_state_without_reco
         transcript_root=tmp_path / "transcripts",
         checkpoint_root=tmp_path / "checkpoints",
     )
-    result = await action_stub_step.run(
-        IncidentActionStubStepRequest(session_id="session-action-stub-missing")
-    )
+    with pytest.raises(ValueError, match="incident_action_stub step entry"):
+        await action_stub_step.run(
+            IncidentActionStubStepRequest(session_id="session-action-stub-missing")
+        )
 
-    events = JsonlTranscriptStore(result.consulted_artifacts.transcript_path).read_all()
-    checkpoint = JsonCheckpointStore(result.checkpoint_path).load()
+    events = JsonlTranscriptStore(
+        tmp_path / "transcripts" / "session-action-stub-missing.jsonl"
+    ).read_all()
+    checkpoint = JsonCheckpointStore(
+        tmp_path / "checkpoints" / "session-action-stub-missing.json"
+    ).load()
 
-    assert result.resumed_successfully is False
-    assert result.branch is ActionStubBranch.INSUFFICIENT_STATE
-    assert result.consumed_recommendation_output is None
-    assert result.action_candidate_produced is None
-    assert result.approval_required is None
-    assert result.runner_status is AgentStatus.VERIFYING
-    assert result.verifier_result.status is VerifierStatus.PASS
-    assert result.insufficiency_reason is not None
-    assert result.consulted_artifacts.previous_phase == "hypothesis_supported"
-    assert result.consulted_artifacts.prior_transcript_event_count == 27
-
-    assert isinstance(events[27], ResumeStartedEvent)
-    assert isinstance(events[28], ModelStepEvent)
-    assert isinstance(events[29], VerifierResultEvent)
-    assert isinstance(events[30], CheckpointWrittenEvent)
-
-    assert checkpoint.current_phase == "action_stub_deferred"
+    assert len(events) == 31
+    assert checkpoint.current_phase == "hypothesis_supported"
     assert checkpoint.approval_state.status is ApprovalStatus.NONE
     assert checkpoint.pending_verifier is None

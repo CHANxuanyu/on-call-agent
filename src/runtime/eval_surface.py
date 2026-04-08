@@ -21,6 +21,13 @@ from evals.incident_chain_replay import (
 )
 from evals.models import EvalScenario
 from runtime.inspect import build_artifact_payload, load_artifact_context
+from runtime.phases import (
+    CONSERVATIVE_PATH_PHASES,
+    FAILURE_PHASES,
+    SUPPORTED_PATH_PHASES,
+    IncidentPhase,
+    final_stage_for_phase,
+)
 
 
 class EvalPathClassification(StrEnum):
@@ -133,7 +140,7 @@ def build_eval_run_payload(
         "checkpoint_path": str(artifact_context.checkpoint_path),
         "transcript_path": str(artifact_context.transcript_path),
         "working_memory_path": str(artifact_context.working_memory_path),
-        "current_phase": artifact_context.checkpoint.current_phase,
+        "current_phase": artifact_context.checkpoint.current_phase.value,
         "final_stage": _final_stage(artifact_context.checkpoint.current_phase),
         "path_classification": _classify_path(
             artifact_context=artifact_context,
@@ -219,20 +226,8 @@ def _build_stage_summaries(artifact_payload: dict[str, Any]) -> list[dict[str, A
     return stages
 
 
-def _final_stage(current_phase: str) -> str:
-    if current_phase.startswith("action_stub"):
-        return "action_stub"
-    if current_phase.startswith("recommendation"):
-        return "recommendation"
-    if current_phase.startswith("hypothesis"):
-        return "hypothesis"
-    if current_phase.startswith("evidence"):
-        return "evidence"
-    if current_phase.startswith("follow_up"):
-        return "follow_up"
-    if current_phase.startswith("triage"):
-        return "triage"
-    return "unknown"
+def _final_stage(current_phase: IncidentPhase) -> str:
+    return final_stage_for_phase(current_phase)
 
 
 def _classify_path(
@@ -242,18 +237,11 @@ def _classify_path(
 ) -> EvalPathClassification:
     phase = artifact_context.checkpoint.current_phase
 
-    if "failed_" in phase or any(stage["state"] == "failure" for stage in stages):
+    if phase in FAILURE_PHASES or any(stage["state"] == "failure" for stage in stages):
         return EvalPathClassification.FAILURE_RECOVERY
-    if phase in {
-        "hypothesis_insufficient_evidence",
-        "recommendation_conservative",
-        "action_stub_not_actionable",
-    }:
+    if phase in CONSERVATIVE_PATH_PHASES:
         return EvalPathClassification.CONSERVATIVE
-    if phase in {
-        "recommendation_supported",
-        "action_stub_pending_approval",
-    }:
+    if phase in SUPPORTED_PATH_PHASES:
         return EvalPathClassification.SUPPORTED
     return EvalPathClassification.UNKNOWN
 

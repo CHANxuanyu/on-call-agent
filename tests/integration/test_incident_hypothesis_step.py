@@ -15,6 +15,7 @@ from transcripts.models import (
     ResumeStartedEvent,
     ToolRequestEvent,
     ToolResultEvent,
+    VerifierRequestEvent,
     VerifierResultEvent,
 )
 from transcripts.writer import JsonlTranscriptStore
@@ -97,15 +98,16 @@ async def test_incident_hypothesis_step_builds_supported_deployment_regression(
     assert result.hypothesis_output is not None
     assert result.hypothesis_output.hypothesis_type == "deployment_regression"
     assert result.consulted_artifacts.previous_phase == "evidence_reading_completed"
-    assert result.consulted_artifacts.prior_transcript_event_count == 20
+    assert result.consulted_artifacts.prior_transcript_event_count == 23
 
-    assert isinstance(events[20], ResumeStartedEvent)
-    assert isinstance(events[21], ModelStepEvent)
-    assert isinstance(events[22], PermissionDecisionEvent)
-    assert isinstance(events[23], ToolRequestEvent)
-    assert isinstance(events[24], ToolResultEvent)
-    assert isinstance(events[25], VerifierResultEvent)
-    assert isinstance(events[26], CheckpointWrittenEvent)
+    assert isinstance(events[23], ResumeStartedEvent)
+    assert isinstance(events[24], ModelStepEvent)
+    assert isinstance(events[25], PermissionDecisionEvent)
+    assert isinstance(events[26], ToolRequestEvent)
+    assert isinstance(events[27], ToolResultEvent)
+    assert isinstance(events[28], VerifierRequestEvent)
+    assert isinstance(events[29], VerifierResultEvent)
+    assert isinstance(events[30], CheckpointWrittenEvent)
 
     assert checkpoint.current_phase == "hypothesis_supported"
     assert checkpoint.pending_verifier is None
@@ -143,7 +145,7 @@ async def test_incident_hypothesis_step_builds_insufficient_evidence_result(
 
 
 @pytest.mark.asyncio
-async def test_incident_hypothesis_step_records_insufficient_state_without_evidence_record(
+async def test_incident_hypothesis_step_rejects_wrong_step_entry_before_any_new_write(
     tmp_path: Path,
 ) -> None:
     repo_root = _repository_root()
@@ -175,27 +177,18 @@ async def test_incident_hypothesis_step_records_insufficient_state_without_evide
         transcript_root=tmp_path / "transcripts",
         checkpoint_root=tmp_path / "checkpoints",
     )
-    result = await hypothesis_step.run(
-        IncidentHypothesisStepRequest(session_id="session-missing-evidence")
-    )
+    with pytest.raises(ValueError, match="incident_hypothesis step entry"):
+        await hypothesis_step.run(
+            IncidentHypothesisStepRequest(session_id="session-missing-evidence")
+        )
 
-    events = JsonlTranscriptStore(result.consulted_artifacts.transcript_path).read_all()
-    checkpoint = JsonCheckpointStore(result.checkpoint_path).load()
+    events = JsonlTranscriptStore(
+        tmp_path / "transcripts" / "session-missing-evidence.jsonl"
+    ).read_all()
+    checkpoint = JsonCheckpointStore(
+        tmp_path / "checkpoints" / "session-missing-evidence.json"
+    ).load()
 
-    assert result.resumed_successfully is False
-    assert result.branch is HypothesisBranch.INSUFFICIENT_STATE
-    assert result.consumed_evidence_output is None
-    assert result.runner_status is AgentStatus.VERIFYING
-    assert result.evidence_supported is None
-    assert result.verifier_result.status is VerifierStatus.PASS
-    assert result.insufficiency_reason is not None
-    assert result.consulted_artifacts.previous_phase == "follow_up_investigation_selected"
-    assert result.consulted_artifacts.prior_transcript_event_count == 13
-
-    assert isinstance(events[13], ResumeStartedEvent)
-    assert isinstance(events[14], ModelStepEvent)
-    assert isinstance(events[15], VerifierResultEvent)
-    assert isinstance(events[16], CheckpointWrittenEvent)
-
-    assert checkpoint.current_phase == "hypothesis_deferred"
+    assert len(events) == 15
+    assert checkpoint.current_phase == "follow_up_investigation_selected"
     assert checkpoint.pending_verifier is None
